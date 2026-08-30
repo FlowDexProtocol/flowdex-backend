@@ -37,6 +37,7 @@ const claimRoutes = require('./routes/claims');
 const statsRoutes = require('./routes/stats');
 const webhookRoutes = require('./routes/webhooks');
 const adminRoutes = require('./routes/admin');
+const publicRoutes = require('./routes/public');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -68,6 +69,7 @@ app.use('/api/purchases', purchaseRoutes);
 app.use('/api/referral', referralRoutes);
 app.use('/api/claims', claimRoutes);
 app.use('/api/stats', statsRoutes);
+app.use('/api/public', publicRoutes);
 app.use('/webhooks', webhookRoutes);
 app.use('/admin', adminRoutes);
 
