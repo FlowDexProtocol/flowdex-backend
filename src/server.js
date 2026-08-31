@@ -44,8 +44,16 @@ const PORT = process.env.PORT || 3000;
 
 // ══ MIDDLEWARE ══
 app.use(helmet());
+
+const allowedOrigins = [
+  ...(process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',').map(u => u.trim()) : []),
+  ...(process.env.ADMIN_URL ? process.env.ADMIN_URL.split(',').map(u => u.trim()) : []),
+  'http://localhost:3000',
+  'http://localhost:3001',
+].filter(Boolean);
+
 app.use(cors({
-  origin: [process.env.FRONTEND_URL, process.env.ADMIN_URL].filter(Boolean),
+  origin: allowedOrigins,
   credentials: true,
 }));
 app.use(express.json({ limit: '1mb' }));
