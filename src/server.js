@@ -43,8 +43,6 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ══ MIDDLEWARE ══
-app.use(helmet());
-
 const allowedOrigins = [
   ...(process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',').map(u => u.trim()) : []),
   ...(process.env.ADMIN_URL ? process.env.ADMIN_URL.split(',').map(u => u.trim()) : []),
@@ -56,6 +54,13 @@ app.use(cors({
   origin: allowedOrigins,
   credentials: true,
 }));
+app.options('*', cors());
+
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  crossOriginOpenerPolicy: false,
+}));
+
 app.use(express.json({ limit: '1mb' }));
 
 // Public rate limit — 100 requests/minute per IP (scenario 50)
