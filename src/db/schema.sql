@@ -1,5 +1,5 @@
 -- ══════════════════════════════════════════════════
--- FLOWDEX PROTOCOL DATABASE V2 — 22 TABLES
+-- FLOWDEX PROTOCOL DATABASE V2 — 28 TABLES
 -- Run via: npm run db:setup
 -- ══════════════════════════════════════════════════
 
@@ -393,3 +393,94 @@ CREATE TABLE IF NOT EXISTS notifications (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_notif_wallet ON notifications(wallet);
+
+-- ══════════════════════════════════════════════════
+-- CMS — content the admin can manage without code changes
+-- ══════════════════════════════════════════════════
+
+-- ── Table 23: cms_banners ──
+CREATE TABLE IF NOT EXISTS cms_banners (
+  id SERIAL PRIMARY KEY,
+  title VARCHAR(200) NOT NULL,
+  subtitle TEXT,
+  cta_text VARCHAR(100),
+  cta_link VARCHAR(500),
+  image_url TEXT,
+  bg_style TEXT DEFAULT 'gradient',
+  sort_order INTEGER DEFAULT 0,
+  is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_cms_banners_active ON cms_banners(is_active, sort_order);
+
+-- ── Table 24: cms_faqs ──
+CREATE TABLE IF NOT EXISTS cms_faqs (
+  id SERIAL PRIMARY KEY,
+  question TEXT NOT NULL,
+  answer TEXT NOT NULL,
+  category VARCHAR(50) DEFAULT 'general',
+  sort_order INTEGER DEFAULT 0,
+  is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_cms_faqs_active ON cms_faqs(is_active, category, sort_order);
+
+-- ── Table 25: cms_blog_posts ──
+CREATE TABLE IF NOT EXISTS cms_blog_posts (
+  id SERIAL PRIMARY KEY,
+  title VARCHAR(300) NOT NULL,
+  slug VARCHAR(300) NOT NULL UNIQUE,
+  excerpt TEXT,
+  content TEXT NOT NULL,
+  cover_image_url TEXT,
+  category VARCHAR(50) DEFAULT 'updates',
+  author VARCHAR(100) DEFAULT 'FlowDex Team',
+  is_published BOOLEAN DEFAULT false,
+  published_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_cms_blog_published ON cms_blog_posts(is_published, published_at);
+
+-- ── Table 26: cms_pages ──
+-- Editable page content (section titles, descriptions, any text block), keyed by page.section.field.
+CREATE TABLE IF NOT EXISTS cms_pages (
+  id SERIAL PRIMARY KEY,
+  page VARCHAR(50) NOT NULL,
+  section VARCHAR(50) NOT NULL,
+  field VARCHAR(50) NOT NULL,
+  value TEXT NOT NULL,
+  UNIQUE(page, section, field),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_cms_pages_page ON cms_pages(page);
+
+-- ── Table 27: cms_media ──
+CREATE TABLE IF NOT EXISTS cms_media (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(200) NOT NULL,
+  type VARCHAR(50) NOT NULL,
+  url TEXT NOT NULL,
+  alt_text VARCHAR(300),
+  category VARCHAR(50) DEFAULT 'general',
+  sort_order INTEGER DEFAULT 0,
+  is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_cms_media_category ON cms_media(category, is_active, sort_order);
+
+-- ── Table 28: cms_team ──
+CREATE TABLE IF NOT EXISTS cms_team (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(100) NOT NULL,
+  role VARCHAR(100) NOT NULL,
+  bio TEXT,
+  photo_url TEXT,
+  linkedin_url VARCHAR(500),
+  sort_order INTEGER DEFAULT 0,
+  is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_cms_team_active ON cms_team(is_active, sort_order);

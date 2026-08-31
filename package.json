@@ -8,6 +8,7 @@
     "dev": "nodemon src/server.js",
     "db:setup": "node src/db/setup.js",
     "db:seed": "node src/db/seed-tiers.js",
+    "db:seed-cms": "node src/db/seed-cms.js",
     "reconcile": "node src/jobs/reconciliation.js",
     "snapshot": "node src/jobs/balance-snapshot.js"
   },

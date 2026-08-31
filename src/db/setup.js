@@ -10,7 +10,7 @@ async function setup() {
     console.log('Connecting to database...');
     const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
     await pool.query(schema);
-    console.log('All 22 tables created');
+    console.log('All 28 tables created');
     const result = await pool.query(
       "SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY table_name"
     );
