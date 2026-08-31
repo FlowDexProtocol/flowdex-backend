@@ -20,7 +20,7 @@ const { runReconciliation } = require('../jobs/reconciliation');
 
 // ══ AUTH ══
 
-// POST /admin/login — username + bcrypt password + TOTP 2FA
+// POST /admin/login — username + plaintext password + TOTP 2FA
 router.post('/login', async (req, res) => {
   try {
     const { username, password, totp_code } = req.body;
@@ -28,8 +28,8 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ success: false, error: 'Invalid credentials' });
     }
 
-    // 🔴 ADMIN_PASSWORD_HASH must be set in .env (bcrypt hash of your password)
-    const validPassword = await bcrypt.compare(password || '', process.env.ADMIN_PASSWORD_HASH || '');
+    // 🔴 ADMIN_PASSWORD must be set in .env (plaintext)
+    const validPassword = (password === process.env.ADMIN_PASSWORD);
     if (!validPassword) {
       return res.status(401).json({ success: false, error: 'Invalid credentials' });
     }
