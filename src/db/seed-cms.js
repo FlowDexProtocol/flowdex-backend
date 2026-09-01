@@ -13,7 +13,8 @@ const banners = [
   },
   {
     title: 'Earn a 15% Referral Bonus',
-    subtitle: 'Share your link — you and your referral both earn bonus $FDP plus Terminal Credits.',
+    subtitle:
+      'Share your link — you earn 15% of what your friend spends, and they get a 30% bonus on their purchase. Both split 70% Terminal Credits + 30% $FDP.',
     cta_text: 'Get Your Referral Link',
     cta_link: '/#referral',
     bg_style: 'gradient-purple',
@@ -74,7 +75,7 @@ const faqs = [
   {
     question: 'How does the referral program work?',
     answer:
-      'Every wallet gets a unique referral code as soon as it connects. Share your link — when someone buys using your code, you both earn a bonus in $FDP and Terminal Credits, tracked in your Referral dashboard.',
+      'Every wallet gets a unique referral code as soon as it connects. Share your link — when someone buys using your code, you earn 15% of what they spend and they get a 30% bonus on their own purchase. Both bonuses split 70% Terminal Credits and 30% $FDP tokens, tracked in your Referral dashboard.',
     category: 'referral',
     sort_order: 0,
   },
