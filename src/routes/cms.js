@@ -166,6 +166,15 @@ cmsRoutes.get('/team', async (req, res) => {
 
 // ── Banners ──
 
+// GET /admin/cms/banners — all banners, including inactive (unlike the
+// public list, which only returns is_active = true)
+cmsAdminRoutes.get('/banners', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM cms_banners ORDER BY sort_order ASC, id ASC');
+    res.json(result.rows);
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
 cmsAdminRoutes.post('/banners', async (req, res) => {
   try {
     const { title, subtitle, cta_text, cta_link, image_url, bg_style, sort_order, is_active } = req.body;
@@ -229,6 +238,14 @@ cmsAdminRoutes.post('/banners/reorder', async (req, res) => {
 
 // ── FAQs ──
 
+// GET /admin/cms/faqs — all FAQs, including inactive
+cmsAdminRoutes.get('/faqs', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM cms_faqs ORDER BY sort_order ASC, id ASC');
+    res.json(result.rows);
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
 cmsAdminRoutes.post('/faqs', async (req, res) => {
   try {
     const { question, answer, category, sort_order, is_active } = req.body;
@@ -291,6 +308,15 @@ cmsAdminRoutes.post('/faqs/reorder', async (req, res) => {
 });
 
 // ── Blog ──
+
+// GET /admin/cms/blog — all posts, published or not, full rows (including
+// content) so the editor can populate directly from the list
+cmsAdminRoutes.get('/blog', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM cms_blog_posts ORDER BY created_at DESC');
+    res.json(result.rows);
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
 
 cmsAdminRoutes.post('/blog', async (req, res) => {
   try {
@@ -416,6 +442,14 @@ cmsAdminRoutes.get('/page/:page', async (req, res) => {
 
 // ── Media ──
 
+// GET /admin/cms/media — all media, including inactive
+cmsAdminRoutes.get('/media', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM cms_media ORDER BY sort_order ASC, id ASC');
+    res.json(result.rows);
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
 cmsAdminRoutes.post('/media', async (req, res) => {
   try {
     const { name, type, url, alt_text, category, sort_order, is_active } = req.body;
@@ -445,6 +479,14 @@ cmsAdminRoutes.delete('/media/:id', async (req, res) => {
 });
 
 // ── Team ──
+
+// GET /admin/cms/team — all team members, including inactive
+cmsAdminRoutes.get('/team', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM cms_team ORDER BY sort_order ASC, id ASC');
+    res.json(result.rows);
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
 
 cmsAdminRoutes.post('/team', async (req, res) => {
   try {
