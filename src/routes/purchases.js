@@ -17,7 +17,7 @@ dayjs.extend(isoWeek);
 
 const { validatePurchaseIntent } = require('../middleware/validation');
 const { walletRateLimit } = require('../middleware/wallet-rate-limit');
-const { lockPrice } = require('../services/price-service');
+const { getPrice, lockPrice } = require('../services/price-service');
 const { lookupIP, hashIP, getClientIP } = require('../services/geo-service');
 const { getBtcAddressForBuyer } = require('../services/btc-address-service');
 const { logAudit } = require('../services/audit-service');
@@ -39,6 +39,16 @@ router.post('/intent', walletRateLimit(10, 60000), validatePurchaseIntent, async
       });
     }
     const tier = tierResult.rows[0];
+
+    // ── Price freshness check ──
+    const currentPrice = await getPrice(crypto);
+    if (!currentPrice) {
+      return res.status(503).json({
+        success: false,
+        error: 'Prices temporarily unavailable. Please try again in a minute.',
+        code: 'PRICE_STALE',
+      });
+    }
 
     // ── Price lock ──
     let locked;

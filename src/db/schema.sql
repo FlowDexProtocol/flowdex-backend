@@ -1,5 +1,5 @@
 -- ══════════════════════════════════════════════════
--- FLOWDEX PROTOCOL DATABASE V2 — 28 TABLES
+-- FLOWDEX PROTOCOL DATABASE V2 — 30 TABLES
 -- Run via: npm run db:setup
 -- ══════════════════════════════════════════════════
 
@@ -58,7 +58,8 @@ CREATE TABLE IF NOT EXISTS purchases (
   day_gmt4 DATE,
   week_gmt4 VARCHAR(10),
   month_gmt4 VARCHAR(7),
-  UNIQUE(tx_hash, chain)
+  UNIQUE(tx_hash, chain),
+  CONSTRAINT purchases_tx_hash_unique UNIQUE (tx_hash)
 );
 CREATE INDEX IF NOT EXISTS idx_purchases_wallet ON purchases(buyer_wallet);
 CREATE INDEX IF NOT EXISTS idx_purchases_status ON purchases(status);
@@ -484,3 +485,21 @@ CREATE TABLE IF NOT EXISTS cms_team (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_cms_team_active ON cms_team(is_active, sort_order);
+
+-- ── Table 29: email_subscribers ──
+CREATE TABLE IF NOT EXISTS email_subscribers (
+  id SERIAL PRIMARY KEY,
+  email VARCHAR(255) NOT NULL UNIQUE,
+  subscribed_at TIMESTAMPTZ DEFAULT NOW(),
+  is_active BOOLEAN DEFAULT true
+);
+
+-- ── Table 30: admin_backup_codes ──
+-- 2FA backup codes — single global admin, so no per-user column.
+CREATE TABLE IF NOT EXISTS admin_backup_codes (
+  id SERIAL PRIMARY KEY,
+  code_hash VARCHAR(255) NOT NULL,
+  is_used BOOLEAN DEFAULT false,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  used_at TIMESTAMPTZ
+);

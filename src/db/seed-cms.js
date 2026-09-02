@@ -112,6 +112,12 @@ const pageContent = {
         'Stake $FDP to earn 40% of protocol fees from every trade - crypto, stocks, forex, commodities, and more. Governance voting and routing priority included. In Phase 3, stakers become FlowChain validators.',
     },
   },
+  global: {
+    support: {
+      email: 'support@flowdexprotocol.com',
+      telegram: 'https://t.me/flowdexprotocol',
+    },
+  },
 };
 
 async function seedBanners() {

@@ -48,29 +48,43 @@ async function getPrice(crypto) {
     [symbol]
   );
 
+  let result;
   if (r.rows.length === 0) {
     await refreshPriceCache();
     const r2 = await pool.query(
       'SELECT usd_price, updated_at FROM price_cache WHERE crypto = $1',
       [symbol]
     );
-    return r2.rows[0] || null;
+    result = r2.rows[0] || null;
+  } else {
+    const cached = r.rows[0];
+    const ageSeconds = (Date.now() - new Date(cached.updated_at).getTime()) / 1000;
+
+    // Refresh if older than 30 seconds
+    if (ageSeconds > 30) {
+      await refreshPriceCache();
+      const fresh = await pool.query(
+        'SELECT usd_price, updated_at FROM price_cache WHERE crypto = $1',
+        [symbol]
+      );
+      result = fresh.rows[0] || cached;
+    } else {
+      result = cached;
+    }
   }
 
-  const cached = r.rows[0];
-  const ageSeconds = (Date.now() - new Date(cached.updated_at).getTime()) / 1000;
+  if (!result) return null;
 
-  // Refresh if older than 30 seconds
-  if (ageSeconds > 30) {
-    await refreshPriceCache();
-    const fresh = await pool.query(
-      'SELECT usd_price, updated_at FROM price_cache WHERE crypto = $1',
-      [symbol]
-    );
-    return fresh.rows[0] || cached;
+  // Even after attempting a refresh above, the price may still be stale if
+  // the upstream feed (CoinMarketCap) has been failing repeatedly — never
+  // let a purchase lock in a price that old.
+  const ageMinutes = (Date.now() - new Date(result.updated_at).getTime()) / 60000;
+  if (ageMinutes > 5) {
+    console.warn('[PRICE] Stale price for ' + symbol + ' — last updated ' + ageMinutes.toFixed(1) + ' minutes ago. Refusing to serve it.');
+    return null;
   }
 
-  return cached;
+  return result;
 }
 
 async function lockPrice(crypto) {

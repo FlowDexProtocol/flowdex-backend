@@ -7,9 +7,11 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const pool = require('../db/pool');
 const { adminAuth } = require('../middleware/admin-auth');
 const { verify2FA, generate2FASetup } = require('../middleware/admin-2fa');
+const { loginRateLimit, recordFailedLogin, recordSuccessfulLogin } = require('../middleware/admin-login-rate-limit');
 const { logAudit } = require('../services/audit-service');
 const { createOtcAllocation, processOtcDrip } = require('../services/otc-service');
 const { getSupplyStatus } = require('../services/supply-service');
@@ -20,27 +22,111 @@ const { runReconciliation } = require('../jobs/reconciliation');
 
 // ══ AUTH ══
 
-// POST /admin/login — username + plaintext password + TOTP 2FA
-router.post('/login', async (req, res) => {
+// Checks a plaintext backup code against the stored bcrypt hashes and
+// consumes it (one-time use) on match. O(unused codes) bcrypt compares —
+// there's no way to index a salted hash for direct lookup, and the unused
+// set is small (starts at 10 per generation).
+async function verifyAndConsumeBackupCode(code) {
+  if (!code) return false;
+  const result = await pool.query('SELECT id, code_hash FROM admin_backup_codes WHERE is_used = false');
+  for (const row of result.rows) {
+    const match = await bcrypt.compare(code, row.code_hash);
+    if (match) {
+      await pool.query('UPDATE admin_backup_codes SET is_used = true, used_at = NOW() WHERE id = $1', [row.id]);
+      return true;
+    }
+  }
+  return false;
+}
+
+function generateBackupCode() {
+  // Avoid ambiguous characters (0/O, 1/I/L) for readability when typed by hand.
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = crypto.randomBytes(8);
+  let code = '';
+  for (let i = 0; i < 8; i++) code += chars[bytes[i] % chars.length];
+  return code;
+}
+
+// POST /admin/login — username + plaintext password + TOTP 2FA (or a backup code)
+router.post('/login', loginRateLimit, async (req, res) => {
   try {
-    const { username, password, totp_code } = req.body;
+    const { username, password, totp_code, backup_code } = req.body;
     if (username !== process.env.ADMIN_USERNAME) {
+      recordFailedLogin(req);
       return res.status(401).json({ success: false, error: 'Invalid credentials' });
     }
 
     // 🔴 ADMIN_PASSWORD must be set in .env (plaintext)
     const validPassword = (password === process.env.ADMIN_PASSWORD);
     if (!validPassword) {
+      recordFailedLogin(req);
       return res.status(401).json({ success: false, error: 'Invalid credentials' });
     }
 
-    if (!verify2FA(totp_code)) {
-      return res.status(401).json({ success: false, error: 'Invalid 2FA code' });
+    const secondFactorOk = backup_code ? await verifyAndConsumeBackupCode(backup_code) : verify2FA(totp_code);
+    if (!secondFactorOk) {
+      recordFailedLogin(req);
+      return res.status(401).json({
+        success: false,
+        error: backup_code ? 'Invalid or already-used backup code' : 'Invalid 2FA code',
+      });
     }
 
+    recordSuccessfulLogin(req);
     const token = jwt.sign({ username, role: 'admin' }, process.env.JWT_SECRET, { expiresIn: '24h' });
-    await logAudit('admin_login', null, null, null, null, { username }, 'Admin logged in', username, req.ip);
+    await logAudit('admin_login', null, null, null, null, { username, via: backup_code ? 'backup_code' : 'totp' }, 'Admin logged in', username, req.ip);
     res.json({ success: true, token });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// POST /admin/change-password — { current_password, new_password }
+// Only persists in memory until the next redeploy — the admin must also
+// update the ADMIN_PASSWORD env var (e.g. in Coolify) for it to stick.
+router.post('/change-password', adminAuth, async (req, res) => {
+  try {
+    const { current_password, new_password } = req.body;
+    if (!current_password || !new_password) {
+      return res.status(400).json({ success: false, error: 'current_password and new_password are required' });
+    }
+    if (current_password !== process.env.ADMIN_PASSWORD) {
+      return res.status(401).json({ success: false, error: 'Current password is incorrect' });
+    }
+    if (new_password.length < 8) {
+      return res.status(400).json({ success: false, error: 'New password must be at least 8 characters' });
+    }
+
+    process.env.ADMIN_PASSWORD = new_password;
+
+    await logAudit(
+      'admin_password_changed', null, null, null, null, null,
+      'Admin password changed — in-memory only, update the ADMIN_PASSWORD env var (e.g. in Coolify) to persist across redeploys',
+      req.admin.username, req.ip
+    );
+    res.json({
+      success: true,
+      message: 'Password changed. This only persists until the next redeploy — update your Coolify env var to make it permanent.',
+    });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// POST /admin/2fa/generate-backup-codes — regenerates the backup code set,
+// invalidating any previous batch. Returns the plain codes ONCE.
+router.post('/2fa/generate-backup-codes', adminAuth, async (req, res) => {
+  try {
+    const codes = Array.from({ length: 10 }, generateBackupCode);
+
+    await pool.query('DELETE FROM admin_backup_codes');
+    for (const code of codes) {
+      const hash = await bcrypt.hash(code, 10);
+      await pool.query('INSERT INTO admin_backup_codes (code_hash) VALUES ($1)', [hash]);
+    }
+
+    await logAudit(
+      'admin_backup_codes_generated', null, null, null, null, { count: codes.length },
+      'Admin generated new 2FA backup codes — previous batch invalidated', req.admin.username, req.ip
+    );
+    res.json({ success: true, codes });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 

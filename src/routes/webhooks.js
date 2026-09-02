@@ -22,16 +22,20 @@ const SOLANA_ADDRESS = process.env.SOLANA_RECEIVING_ADDRESS || '';
 
 router.post('/alchemy', async (req, res) => {
   try {
-    // Validate webhook signature
+    // Validate webhook signature — MANDATORY. A missing signing key is a
+    // misconfiguration, not an excuse to accept unverified webhooks.
     const signingKey = process.env.ALCHEMY_WEBHOOK_SIGNING_KEY;
-    if (signingKey) {
-      const signature = req.headers['x-alchemy-signature'];
-      const body = JSON.stringify(req.body);
-      const hmac = crypto.createHmac('sha256', signingKey).update(body).digest('hex');
-      if (signature !== hmac) {
-        console.warn('[WEBHOOK] Invalid signature — possible spoofing');
-        return res.status(401).json({ error: 'Invalid signature' });
-      }
+    if (!signingKey) {
+      console.error('[WEBHOOK] ALCHEMY_WEBHOOK_SIGNING_KEY is not set — rejecting webhook. Configure it in .env.');
+      return res.status(401).json({ error: 'Webhook verification not configured' });
+    }
+
+    const signature = req.headers['x-alchemy-signature'];
+    const body = JSON.stringify(req.body);
+    const hmac = crypto.createHmac('sha256', signingKey).update(body).digest('hex');
+    if (!signature || signature !== hmac) {
+      console.warn('[WEBHOOK] Rejected: invalid signature — possible spoofing. IP: ' + (req.headers['x-forwarded-for'] || req.socket.remoteAddress));
+      return res.status(401).json({ error: 'Invalid signature' });
     }
 
     recordWebhookReceived();
