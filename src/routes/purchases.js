@@ -17,6 +17,7 @@ dayjs.extend(isoWeek);
 
 const { validatePurchaseIntent } = require('../middleware/validation');
 const { walletRateLimit } = require('../middleware/wallet-rate-limit');
+const { ipRateLimit } = require('../middleware/ip-rate-limit');
 const { getPrice, lockPrice } = require('../services/price-service');
 const { lookupIP, hashIP, getClientIP } = require('../services/geo-service');
 const { getBtcAddressForBuyer } = require('../services/btc-address-service');
@@ -145,6 +146,31 @@ router.get('/recent', async (req, res) => {
       created_at: r.created_at,
     }));
     res.json(truncated);
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// GET /api/purchases/status/:tx_hash — public lookup, no wallet connection
+// needed. tx_hash is stored verbatim (not lowercased) at webhook-ingest time
+// (see webhooks.js), so this is an exact-match lookup.
+router.get('/status/:tx_hash', ipRateLimit(20, 60000), async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT status, usd_value, tokens_allocated, tier_name, created_at, confirmed_at
+       FROM purchases WHERE tx_hash = $1`,
+      [req.params.tx_hash]
+    );
+    if (result.rows.length === 0) return res.json({ found: false });
+
+    const p = result.rows[0];
+    res.json({
+      found: true,
+      status: p.status,
+      usd_value: p.usd_value !== null ? parseFloat(p.usd_value) : null,
+      tokens_allocated: p.tokens_allocated !== null ? parseFloat(p.tokens_allocated) : null,
+      tier_name: p.tier_name,
+      created_at: p.created_at,
+      confirmed_at: p.confirmed_at,
+    });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 

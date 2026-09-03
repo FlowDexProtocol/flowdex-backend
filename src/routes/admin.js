@@ -20,6 +20,45 @@ const { confirmPayment } = require('../services/payment-service');
 const { getWebhookHealth } = require('../services/webhook-health');
 const { runReconciliation } = require('../jobs/reconciliation');
 
+// ── Pagination + CSV helpers ──
+
+// Reads ?page=&limit= off a request, clamped to sane bounds.
+function getPagination(req) {
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
+  return { page, limit, offset: (page - 1) * limit };
+}
+
+// Resolves a client-supplied `sort` query param against an allowlist of
+// real column names — sort/order can never be interpolated raw into SQL
+// (no $n placeholder works for identifiers), so anything not in the
+// allowlist silently falls back to the default.
+function resolveSort(req, allowlist, defaultSort) {
+  const requested = req.query.sort;
+  const sortKey = typeof requested === 'string' && Object.prototype.hasOwnProperty.call(allowlist, requested) ? requested : defaultSort;
+  const column = allowlist[sortKey];
+  const order = String(req.query.order).toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+  return `${column} ${order}`;
+}
+
+function toCsv(rows) {
+  if (rows.length === 0) return '';
+  const headers = Object.keys(rows[0]).join(',');
+  const body = rows.map((r) => Object.values(r).map((v) => '"' + String(v ?? '').replace(/"/g, '""') + '"').join(',')).join('\n');
+  return headers + '\n' + body;
+}
+
+function csvFilename(name) {
+  return `${name}_${new Date().toISOString().split('T')[0]}.csv`;
+}
+
+function sendCsv(res, name, rows) {
+  if (rows.length === 0) return res.status(404).json({ success: false, error: `No ${name} to export` });
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="${csvFilename(name)}"`);
+  res.send(toCsv(rows));
+}
+
 // ══ AUTH ══
 
 // Checks a plaintext backup code against the stored bcrypt hashes and
@@ -176,41 +215,68 @@ router.get('/webhook-health', adminAuth, (req, res) => {
 
 // ══ PURCHASE MANAGEMENT ══
 
+const PURCHASES_SORT = {
+  created_at: 'created_at',
+  usd_value: 'usd_value',
+  tokens_allocated: 'tokens_allocated',
+};
+
+// Shared filter/search builder for /purchases and /purchases/export/csv —
+// keeps both in sync on what "matching rows" means.
+function buildPurchaseFilter(query) {
+  const { tier, currency, status, from, to, search } = query;
+  const conditions = [];
+  const params = [];
+  let i = 1;
+
+  if (tier) { conditions.push(`tier_at_purchase = $${i++}`); params.push(tier); }
+  if (currency) { conditions.push(`crypto_currency = $${i++}`); params.push(currency); }
+  if (status) { conditions.push(`status = $${i++}`); params.push(status); }
+  if (from) { conditions.push(`created_at >= $${i++}`); params.push(from); }
+  if (to) { conditions.push(`created_at <= $${i++}`); params.push(to); }
+  if (search) {
+    conditions.push(`(buyer_wallet ILIKE $${i} OR tx_hash ILIKE $${i} OR crypto_currency ILIKE $${i})`);
+    params.push(`%${search}%`);
+    i++;
+  }
+
+  return { where: conditions.length ? 'WHERE ' + conditions.join(' AND ') : '', params };
+}
+
 router.get('/purchases', adminAuth, async (req, res) => {
   try {
-    const { tier, currency, status, from, to } = req.query;
-    const conditions = [];
-    const params = [];
-    let i = 1;
+    const { where, params } = buildPurchaseFilter(req.query);
+    const { page, limit, offset } = getPagination(req);
+    const orderBy = resolveSort(req, PURCHASES_SORT, 'created_at');
 
-    if (tier) { conditions.push(`tier_at_purchase = $${i++}`); params.push(tier); }
-    if (currency) { conditions.push(`crypto_currency = $${i++}`); params.push(currency); }
-    if (status) { conditions.push(`status = $${i++}`); params.push(status); }
-    if (from) { conditions.push(`created_at >= $${i++}`); params.push(from); }
-    if (to) { conditions.push(`created_at <= $${i++}`); params.push(to); }
+    const countResult = await pool.query(`SELECT COUNT(*) as t FROM purchases ${where}`, params);
+    const total = parseInt(countResult.rows[0].t, 10);
 
-    const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
-    const result = await pool.query(
-      `SELECT * FROM purchases ${where} ORDER BY created_at DESC LIMIT 500`, params
+    const dataResult = await pool.query(
+      `SELECT * FROM purchases ${where} ORDER BY ${orderBy} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
     );
-    res.json(result.rows);
+
+    res.json({ data: dataResult.rows, total, page, limit, pages: Math.max(1, Math.ceil(total / limit)) });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
-// GET /admin/purchases/export — CSV export
+// GET /admin/purchases/export — CSV export (legacy path, kept for compat)
 router.get('/purchases/export', adminAuth, async (req, res) => {
   try {
     const purchases = await pool.query('SELECT * FROM purchases ORDER BY created_at DESC');
-    const rows = purchases.rows;
-    if (rows.length === 0) return res.status(404).json({ error: 'No purchases to export' });
+    sendCsv(res, 'purchases', purchases.rows);
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
 
-    const headers = Object.keys(rows[0]).join(',');
-    const csvRows = rows.map(r => Object.values(r).map(v => '"' + String(v ?? '').replace(/"/g, '""') + '"').join(','));
-    const csv = headers + '\n' + csvRows.join('\n');
-
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', 'attachment; filename=flowdex_purchases_' + new Date().toISOString().split('T')[0] + '.csv');
-    res.send(csv);
+// GET /admin/purchases/export/csv — same as above, at the requested path.
+// Honors the same filters as GET /purchases but returns every matching row
+// (not just one page).
+router.get('/purchases/export/csv', adminAuth, async (req, res) => {
+  try {
+    const { where, params } = buildPurchaseFilter(req.query);
+    const result = await pool.query(`SELECT * FROM purchases ${where} ORDER BY created_at DESC`, params);
+    sendCsv(res, 'purchases', result.rows);
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
@@ -297,10 +363,41 @@ router.post('/purchase/:id/resolve', adminAuth, async (req, res) => {
 
 // ══ BUYERS ══
 
+const BUYERS_SORT = {
+  total_usd_spent: 'total_usd_spent',
+  total_tokens: 'total_tokens',
+  created_at: 'created_at',
+};
+
+function buildBuyerFilter(query) {
+  const { search } = query;
+  if (!search) return { where: '', params: [] };
+  return { where: 'WHERE (buyer_wallet ILIKE $1 OR tag ILIKE $1)', params: [`%${search}%`] };
+}
+
 router.get('/buyers', adminAuth, async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM buyers ORDER BY total_usd_spent DESC LIMIT 500');
-    res.json(result.rows);
+    const { where, params } = buildBuyerFilter(req.query);
+    const { page, limit, offset } = getPagination(req);
+    const orderBy = resolveSort(req, BUYERS_SORT, 'total_usd_spent');
+
+    const countResult = await pool.query(`SELECT COUNT(*) as t FROM buyers ${where}`, params);
+    const total = parseInt(countResult.rows[0].t, 10);
+
+    const dataResult = await pool.query(
+      `SELECT * FROM buyers ${where} ORDER BY ${orderBy} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    );
+
+    res.json({ data: dataResult.rows, total, page, limit, pages: Math.max(1, Math.ceil(total / limit)) });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.get('/buyers/export/csv', adminAuth, async (req, res) => {
+  try {
+    const { where, params } = buildBuyerFilter(req.query);
+    const result = await pool.query(`SELECT * FROM buyers ${where} ORDER BY total_usd_spent DESC`, params);
+    sendCsv(res, 'buyers', result.rows);
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
@@ -339,27 +436,60 @@ router.get('/tiers', adminAuth, async (req, res) => {
 
 router.get('/referrals', adminAuth, async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM referrals ORDER BY created_at DESC LIMIT 500');
-    res.json(result.rows);
+    const { page, limit, offset } = getPagination(req);
+
+    const countResult = await pool.query('SELECT COUNT(*) as t FROM referrals');
+    const total = parseInt(countResult.rows[0].t, 10);
+
+    const dataResult = await pool.query('SELECT * FROM referrals ORDER BY created_at DESC LIMIT $1 OFFSET $2', [limit, offset]);
+
+    res.json({ data: dataResult.rows, total, page, limit, pages: Math.max(1, Math.ceil(total / limit)) });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.get('/referrals/export/csv', adminAuth, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM referrals ORDER BY created_at DESC');
+    sendCsv(res, 'referrals', result.rows);
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
 // ══ CLAIMS ══
 
+function buildClaimFilter(query) {
+  const { tier, status, from, to } = query;
+  const conditions = [];
+  const params = [];
+  let i = 1;
+  if (tier) { conditions.push(`tier_id = $${i++}`); params.push(tier); }
+  if (status) { conditions.push(`status = $${i++}`); params.push(status); }
+  if (from) { conditions.push(`created_at >= $${i++}`); params.push(from); }
+  if (to) { conditions.push(`created_at <= $${i++}`); params.push(to); }
+  return { where: conditions.length ? 'WHERE ' + conditions.join(' AND ') : '', params };
+}
+
 router.get('/claims', adminAuth, async (req, res) => {
   try {
-    const { tier, status, from, to } = req.query;
-    const conditions = [];
-    const params = [];
-    let i = 1;
-    if (tier) { conditions.push(`tier_id = $${i++}`); params.push(tier); }
-    if (status) { conditions.push(`status = $${i++}`); params.push(status); }
-    if (from) { conditions.push(`created_at >= $${i++}`); params.push(from); }
-    if (to) { conditions.push(`created_at <= $${i++}`); params.push(to); }
-    const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+    const { where, params } = buildClaimFilter(req.query);
+    const { page, limit, offset } = getPagination(req);
 
-    const result = await pool.query(`SELECT * FROM claims ${where} ORDER BY created_at DESC LIMIT 500`, params);
-    res.json(result.rows);
+    const countResult = await pool.query(`SELECT COUNT(*) as t FROM claims ${where}`, params);
+    const total = parseInt(countResult.rows[0].t, 10);
+
+    const dataResult = await pool.query(
+      `SELECT * FROM claims ${where} ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    );
+
+    res.json({ data: dataResult.rows, total, page, limit, pages: Math.max(1, Math.ceil(total / limit)) });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.get('/claims/export/csv', adminAuth, async (req, res) => {
+  try {
+    const { where, params } = buildClaimFilter(req.query);
+    const result = await pool.query(`SELECT * FROM claims ${where} ORDER BY created_at DESC`, params);
+    sendCsv(res, 'claims', result.rows);
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
@@ -383,20 +513,48 @@ router.get('/claims/stats', adminAuth, async (req, res) => {
 
 // ══ AUDIT LOG ══
 
+// event_type/wallet stay as exact-match filters (unchanged); `search` is
+// additive — a partial, case-insensitive OR across event_type/related_wallet/
+// reason, for consistency with the search behavior on the other list endpoints.
+function buildAuditFilter(query) {
+  const { event_type, wallet, from, to, search } = query;
+  const conditions = [];
+  const params = [];
+  let i = 1;
+  if (event_type) { conditions.push(`event_type = $${i++}`); params.push(event_type); }
+  if (wallet) { conditions.push(`related_wallet = $${i++}`); params.push(wallet.toLowerCase()); }
+  if (from) { conditions.push(`created_at >= $${i++}`); params.push(from); }
+  if (to) { conditions.push(`created_at <= $${i++}`); params.push(to); }
+  if (search) {
+    conditions.push(`(event_type ILIKE $${i} OR related_wallet ILIKE $${i} OR reason ILIKE $${i})`);
+    params.push(`%${search}%`);
+    i++;
+  }
+  return { where: conditions.length ? 'WHERE ' + conditions.join(' AND ') : '', params };
+}
+
 router.get('/audit-log', adminAuth, async (req, res) => {
   try {
-    const { event_type, wallet, from, to } = req.query;
-    const conditions = [];
-    const params = [];
-    let i = 1;
-    if (event_type) { conditions.push(`event_type = $${i++}`); params.push(event_type); }
-    if (wallet) { conditions.push(`related_wallet = $${i++}`); params.push(wallet.toLowerCase()); }
-    if (from) { conditions.push(`created_at >= $${i++}`); params.push(from); }
-    if (to) { conditions.push(`created_at <= $${i++}`); params.push(to); }
-    const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+    const { where, params } = buildAuditFilter(req.query);
+    const { page, limit, offset } = getPagination(req);
 
-    const result = await pool.query(`SELECT * FROM audit_log ${where} ORDER BY created_at DESC LIMIT 500`, params);
-    res.json(result.rows);
+    const countResult = await pool.query(`SELECT COUNT(*) as t FROM audit_log ${where}`, params);
+    const total = parseInt(countResult.rows[0].t, 10);
+
+    const dataResult = await pool.query(
+      `SELECT * FROM audit_log ${where} ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    );
+
+    res.json({ data: dataResult.rows, total, page, limit, pages: Math.max(1, Math.ceil(total / limit)) });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.get('/audit-log/export/csv', adminAuth, async (req, res) => {
+  try {
+    const { where, params } = buildAuditFilter(req.query);
+    const result = await pool.query(`SELECT * FROM audit_log ${where} ORDER BY created_at DESC`, params);
+    sendCsv(res, 'audit_log', result.rows);
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
@@ -704,14 +862,9 @@ router.get('/report/financial/csv', adminAuth, async (req, res) => {
     const purchases = await pool.query(
       "SELECT id, buyer_wallet, tx_hash, chain, crypto_currency, crypto_amount, usd_value, tier_at_purchase, tier_name, tier_price, tokens_allocated, status, buyer_country, buyer_city, referred_by_code, created_at, confirmed_at FROM purchases ORDER BY created_at DESC"
     );
-
-    const headers = Object.keys(purchases.rows[0] || {}).join(',');
-    const rows = purchases.rows.map(r => Object.values(r).map(v => '"' + String(v || '').replace(/"/g, '""') + '"').join(','));
-    const csv = headers + '\n' + rows.join('\n');
-
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', 'attachment; filename=flowdex_purchases_' + new Date().toISOString().split('T')[0] + '.csv');
-    res.send(csv);
+    // Filename fixed from a copy-paste leftover ("flowdex_purchases_...") —
+    // this exports the financial report, not the raw purchases table.
+    sendCsv(res, 'financial_report', purchases.rows);
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
