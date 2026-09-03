@@ -177,14 +177,26 @@ cmsAdminRoutes.get('/banners', async (req, res) => {
 
 cmsAdminRoutes.post('/banners', async (req, res) => {
   try {
-    const { title, subtitle, cta_text, cta_link, image_url, bg_style, sort_order, is_active } = req.body;
+    const {
+      title, subtitle, cta_text, cta_link, image_url,
+      image_url_desktop, image_url_mobile, countdown_end, show_countdown, bg_color,
+      bg_style, sort_order, is_active,
+    } = req.body;
     if (!title) return res.status(400).json({ success: false, error: 'title is required' });
 
     const result = await pool.query(
-      `INSERT INTO cms_banners (title, subtitle, cta_text, cta_link, image_url, bg_style, sort_order, is_active)
-       VALUES ($1,$2,$3,$4,$5,COALESCE($6,'gradient'),COALESCE($7,0),COALESCE($8,true))
+      `INSERT INTO cms_banners (
+         title, subtitle, cta_text, cta_link, image_url,
+         image_url_desktop, image_url_mobile, countdown_end, show_countdown, bg_color,
+         bg_style, sort_order, is_active
+       )
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9,false),$10,COALESCE($11,'gradient'),COALESCE($12,0),COALESCE($13,true))
        RETURNING *`,
-      [title, subtitle || null, cta_text || null, cta_link || null, image_url || null, bg_style, sort_order, is_active]
+      [
+        title, subtitle || null, cta_text || null, cta_link || null, image_url || null,
+        image_url_desktop || null, image_url_mobile || null, countdown_end || null, show_countdown, bg_color || null,
+        bg_style, sort_order, is_active,
+      ]
     );
     const banner = result.rows[0];
     await logAudit('cms_banner_created', null, null, null, null, banner, 'CMS banner created', req.admin.username, req.ip);
@@ -197,7 +209,11 @@ cmsAdminRoutes.put('/banners/:id', async (req, res) => {
     const existing = await pool.query('SELECT * FROM cms_banners WHERE id = $1', [req.params.id]);
     if (existing.rows.length === 0) return res.status(404).json({ success: false, error: 'Banner not found' });
 
-    const allowed = ['title', 'subtitle', 'cta_text', 'cta_link', 'image_url', 'bg_style', 'sort_order', 'is_active'];
+    const allowed = [
+      'title', 'subtitle', 'cta_text', 'cta_link', 'image_url',
+      'image_url_desktop', 'image_url_mobile', 'countdown_end', 'show_countdown', 'bg_color',
+      'bg_style', 'sort_order', 'is_active',
+    ];
     const { sets, params } = buildUpdateClause(req.body, allowed);
     if (sets.length === 0) return res.status(400).json({ success: false, error: 'No valid fields to update' });
 
@@ -408,6 +424,58 @@ cmsAdminRoutes.post('/blog/:id/unpublish', async (req, res) => {
 });
 
 // ── Page content ──
+
+// GET /admin/cms/pages — every distinct page name that has content,
+// so the admin UI can list pages without hardcoding them.
+cmsAdminRoutes.get('/pages', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT DISTINCT page FROM cms_pages ORDER BY page ASC');
+    res.json(result.rows.map((r) => r.page));
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// POST /admin/cms/page/bulk-update — { updates: [{ page, section, field, value }] }
+// Applies every update in one transaction — either they all land or none do.
+cmsAdminRoutes.post('/page/bulk-update', async (req, res) => {
+  const { updates } = req.body;
+  if (!Array.isArray(updates) || updates.length === 0) {
+    return res.status(400).json({ success: false, error: 'updates array is required' });
+  }
+  for (const u of updates) {
+    if (!u || typeof u !== 'object' || !u.page || !u.section || !u.field || u.value === undefined || u.value === null) {
+      return res.status(400).json({ success: false, error: 'Each update needs page, section, field, and value' });
+    }
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const results = [];
+    for (const u of updates) {
+      const result = await client.query(
+        `INSERT INTO cms_pages (page, section, field, value, updated_at)
+         VALUES ($1,$2,$3,$4,NOW())
+         ON CONFLICT (page, section, field) DO UPDATE SET value = $4, updated_at = NOW()
+         RETURNING *`,
+        [u.page, u.section, u.field, String(u.value)]
+      );
+      results.push(result.rows[0]);
+    }
+    await client.query('COMMIT');
+
+    await logAudit(
+      'cms_page_bulk_updated', null, null, null, null,
+      { count: results.length, keys: updates.map((u) => `${u.page}.${u.section}.${u.field}`) },
+      `CMS bulk update: ${results.length} fields`, req.admin.username, req.ip
+    );
+    res.json({ success: true, updated: results.length, content: results });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ success: false, error: err.message });
+  } finally {
+    client.release();
+  }
+});
 
 cmsAdminRoutes.put('/page/:page/:section/:field', async (req, res) => {
   try {

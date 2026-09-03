@@ -27,6 +27,20 @@ async function setup() {
       console.log('purchases_tx_hash_unique already exists — skipping.');
     }
 
+    // Migration-safe: CREATE TABLE IF NOT EXISTS in schema.sql only adds
+    // these columns on a brand-new cms_banners table. ADD COLUMN IF NOT
+    // EXISTS is natively idempotent in Postgres, so this is safe to run
+    // unconditionally on every setup.js run.
+    console.log('Ensuring cms_banners image/countdown columns exist...');
+    await pool.query(`
+      ALTER TABLE cms_banners ADD COLUMN IF NOT EXISTS image_url_desktop TEXT;
+      ALTER TABLE cms_banners ADD COLUMN IF NOT EXISTS image_url_mobile TEXT;
+      ALTER TABLE cms_banners ADD COLUMN IF NOT EXISTS countdown_end TIMESTAMPTZ;
+      ALTER TABLE cms_banners ADD COLUMN IF NOT EXISTS show_countdown BOOLEAN DEFAULT false;
+      ALTER TABLE cms_banners ADD COLUMN IF NOT EXISTS bg_color VARCHAR(20);
+    `);
+    console.log('cms_banners columns OK.');
+
     const result = await pool.query(
       "SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY table_name"
     );
