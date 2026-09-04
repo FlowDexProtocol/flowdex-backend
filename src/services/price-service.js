@@ -1,6 +1,7 @@
 // ══════════════════════════════════════════════════
 // src/services/price-service.js
-// Uses CoinMarketCap for live price feeds
+// Uses CoinMarketCap for live price feeds, with a CoinGecko fallback for
+// extended CMC outages. See refreshPriceCache() for the 429 backoff design.
 // ══════════════════════════════════════════════════
 
 const axios = require('axios');
@@ -12,7 +13,75 @@ const API_KEY = process.env.COINMARKETCAP_API_KEY;
 // CMC uses symbols directly — no ID mapping needed
 const SYMBOLS = 'ETH,BNB,SOL,BTC,USDT,USDC,TRX';
 
+// ── CMC 429 backoff + outage tracking ──
+// consecutive429Count / nextRetryAt implement the exponential backoff: 10min,
+// 20min, 40min, capped at 60min, reset to 0 on the next successful CMC call.
+// downSince marks when CMC started failing (429 or otherwise) so we know
+// when it's been down long enough (30min) to reach for the CoinGecko
+// fallback below — it's cleared only by a real CMC success, not a
+// CoinGecko one, so we keep retrying CMC on its own schedule regardless.
+let consecutive429Count = 0;
+let nextRetryAt = 0;
+let downSince = null;
+
+const MIN_BACKOFF_MINUTES = 10;
+const MAX_BACKOFF_MINUTES = 60;
+const FALLBACK_AFTER_MINUTES = 30;
+
+// CoinGecko's free simple/price endpoint — no API key required. Only covers
+// the coins CoinGecko's free tier lists by id; USDC/TRX aren't included, so
+// those just keep aging until CMC recovers (getPrice's 15-minute guard then
+// refuses to serve them rather than serving something wrong).
+const COINGECKO_URL = 'https://api.coingecko.com/api/v3/simple/price';
+const COINGECKO_ID_TO_SYMBOL = {
+  ethereum: 'ETH',
+  bitcoin: 'BTC',
+  binancecoin: 'BNB',
+  solana: 'SOL',
+  tether: 'USDT',
+};
+
+function shouldTryCoinGeckoFallback() {
+  return downSince !== null && Date.now() - downSince > FALLBACK_AFTER_MINUTES * 60 * 1000;
+}
+
+async function refreshFromCoinGecko() {
+  try {
+    const response = await axios.get(COINGECKO_URL, {
+      params: { ids: Object.keys(COINGECKO_ID_TO_SYMBOL).join(','), vs_currencies: 'usd' },
+      timeout: 5000,
+    });
+
+    const now = new Date();
+    let updated = 0;
+    for (const [id, symbol] of Object.entries(COINGECKO_ID_TO_SYMBOL)) {
+      const price = response.data[id]?.usd;
+      if (price) {
+        await pool.query(
+          'INSERT INTO price_cache (crypto, usd_price, updated_at) VALUES ($1, $2, $3) ON CONFLICT (crypto) DO UPDATE SET usd_price = $2, updated_at = $3',
+          [symbol, price, now]
+        );
+        updated++;
+      }
+    }
+    console.warn('[PRICE] CMC has been down for over ' + FALLBACK_AFTER_MINUTES + ' min — used CoinGecko fallback, updated ' + updated + ' price(s).');
+  } catch (err) {
+    console.error('[PRICE] CoinGecko fallback also failed:', err.message);
+  }
+}
+
 async function refreshPriceCache() {
+  const now = Date.now();
+
+  // Still cooling down from a recent 429 — skip the CMC call entirely
+  // rather than making the rate limit worse. If CMC has been down long
+  // enough, lean on CoinGecko in the meantime.
+  if (nextRetryAt && now < nextRetryAt) {
+    console.log('[PRICE] Backing off CMC after repeated 429s — next attempt at ' + new Date(nextRetryAt).toISOString());
+    if (shouldTryCoinGeckoFallback()) await refreshFromCoinGecko();
+    return;
+  }
+
   try {
     // 🔴 Uses your CoinMarketCap API key
     const response = await axios.get(
@@ -24,20 +93,35 @@ async function refreshPriceCache() {
       }
     );
 
+    consecutive429Count = 0;
+    nextRetryAt = 0;
+    downSince = null;
+
     const data = response.data.data;
-    const now = new Date();
+    const priceNow = new Date();
 
     for (const [symbol, info] of Object.entries(data)) {
       const price = info.quote?.USD?.price;
       if (price) {
         await pool.query(
           'INSERT INTO price_cache (crypto, usd_price, updated_at) VALUES ($1, $2, $3) ON CONFLICT (crypto) DO UPDATE SET usd_price = $2, updated_at = $3',
-          [symbol, price, now]
+          [symbol, price, priceNow]
         );
       }
     }
   } catch (err) {
-    console.error('[PRICE] CMC refresh failed:', err.message);
+    if (downSince === null) downSince = now;
+
+    if (err.response?.status === 429) {
+      consecutive429Count += 1;
+      const waitMinutes = Math.min(MAX_BACKOFF_MINUTES, MIN_BACKOFF_MINUTES * 2 ** (consecutive429Count - 1));
+      nextRetryAt = now + waitMinutes * 60 * 1000;
+      console.error('[PRICE] CMC rate-limited (429) — backing off ' + waitMinutes + ' min (consecutive #' + consecutive429Count + ')');
+    } else {
+      console.error('[PRICE] CMC refresh failed:', err.message);
+    }
+
+    if (shouldTryCoinGeckoFallback()) await refreshFromCoinGecko();
   }
 }
 
@@ -58,10 +142,14 @@ async function getPrice(crypto) {
     result = r2.rows[0] || null;
   } else {
     const cached = r.rows[0];
-    const ageSeconds = (Date.now() - new Date(cached.updated_at).getTime()) / 1000;
+    const cachedAgeMinutes = (Date.now() - new Date(cached.updated_at).getTime()) / 60000;
 
-    // Refresh if older than 30 seconds
-    if (ageSeconds > 30) {
+    // The cron refreshes every 5 minutes; only force an on-demand refresh
+    // here if the cache has drifted well past that window (a missed cron
+    // tick, or a fresh deploy) — refreshPriceCache() has its own 429 backoff
+    // guard, so calling it here can't itself become a source of rate-limit
+    // hammering the way the old 30-second threshold did.
+    if (cachedAgeMinutes > 6) {
       await refreshPriceCache();
       const fresh = await pool.query(
         'SELECT usd_price, updated_at FROM price_cache WHERE crypto = $1',
@@ -76,15 +164,20 @@ async function getPrice(crypto) {
   if (!result) return null;
 
   // Even after attempting a refresh above, the price may still be stale if
-  // the upstream feed (CoinMarketCap) has been failing repeatedly — never
-  // let a purchase lock in a price that old.
+  // the upstream feed (CoinMarketCap, and once it's been down 30+ minutes,
+  // the CoinGecko fallback too) has been failing repeatedly — never let a
+  // purchase lock in a price that old. 15 minutes (up from 5) gives real
+  // buffer for a brief CMC outage to ride out the 10-60 minute 429 backoff.
   const ageMinutes = (Date.now() - new Date(result.updated_at).getTime()) / 60000;
-  if (ageMinutes > 5) {
+  if (ageMinutes > 15) {
     console.warn('[PRICE] Stale price for ' + symbol + ' — last updated ' + ageMinutes.toFixed(1) + ' minutes ago. Refusing to serve it.');
     return null;
   }
 
-  return result;
+  // is_delayed: surfaced to the frontend so the buy page can show a "Prices
+  // may be delayed" warning once a price is over 5 minutes old, without
+  // refusing to show it outright (that only happens past 15 minutes above).
+  return { ...result, is_delayed: ageMinutes > 5 };
 }
 
 async function lockPrice(crypto) {

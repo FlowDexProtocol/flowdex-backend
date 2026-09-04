@@ -1,6 +1,7 @@
 // ══════════════════════════════════════════════════
 // src/routes/prices.js
-// Live price endpoint — reads from the 30-second cache
+// Live price endpoint — reads from the price cache (refreshed on a 5-minute
+// cron; see src/services/price-service.js)
 // ══════════════════════════════════════════════════
 
 const express = require('express');
@@ -22,6 +23,10 @@ router.get('/:crypto', async (req, res) => {
       crypto: req.params.crypto.toUpperCase(),
       usd_price: parseFloat(price.usd_price),
       updated_at: price.updated_at,
+      // true once the price is over 5 minutes old — the buy page should
+      // show a "Prices may be delayed" warning but keep showing the price.
+      // Prices over 15 minutes old are refused entirely (503) above.
+      is_delayed: !!price.is_delayed,
     });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
