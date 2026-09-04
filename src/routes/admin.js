@@ -182,7 +182,12 @@ router.get('/2fa-setup', async (req, res) => {
 router.get('/dashboard', adminAuth, async (req, res) => {
   try {
     const raised = await pool.query('SELECT COALESCE(SUM(total_raised_usd),0) as t FROM tiers');
-    const buyers = await pool.query('SELECT COUNT(*) as t FROM buyers');
+    // total_buyers = wallets with at least one confirmed purchase — NOT every
+    // row in `buyers`, which also includes wallets that only created an
+    // intent (or connected) and never actually paid. total_wallets_connected
+    // is the old all-wallets count, kept as a separate secondary stat.
+    const buyers = await pool.query("SELECT COUNT(DISTINCT buyer_wallet) as t FROM purchases WHERE status = 'confirmed'");
+    const walletsConnected = await pool.query('SELECT COUNT(*) as t FROM buyers');
     const activeTier = await pool.query('SELECT * FROM tiers WHERE is_active = true LIMIT 1');
     const lastReconciliation = await pool.query('SELECT * FROM reconciliation_results ORDER BY created_at DESC LIMIT 1');
     const lastSnapshot = await pool.query('SELECT * FROM balance_snapshots ORDER BY created_at DESC LIMIT 1');
@@ -192,6 +197,7 @@ router.get('/dashboard', adminAuth, async (req, res) => {
       success: true,
       total_raised: parseFloat(raised.rows[0].t),
       total_buyers: parseInt(buyers.rows[0].t),
+      total_wallets_connected: parseInt(walletsConnected.rows[0].t),
       active_tier: activeTier.rows[0] || null,
       last_reconciliation: lastReconciliation.rows[0] || null,
       last_balance_snapshot: lastSnapshot.rows[0] || null,
@@ -821,7 +827,10 @@ router.get('/report/financial', adminAuth, async (req, res) => {
   try {
     const tierData = await pool.query('SELECT * FROM tiers ORDER BY id');
     const totalRaised = await pool.query("SELECT COALESCE(SUM(total_raised_usd),0) as t FROM tiers");
-    const totalBuyers = await pool.query("SELECT COUNT(*) as t FROM buyers");
+    // Same fix as /admin/dashboard: confirmed-purchase wallets, not every
+    // row in `buyers` (which includes never-paid intents).
+    const totalBuyers = await pool.query("SELECT COUNT(DISTINCT buyer_wallet) as t FROM purchases WHERE status = 'confirmed'");
+    const totalWalletsConnected = await pool.query("SELECT COUNT(*) as t FROM buyers");
     const totalPurchases = await pool.query("SELECT COUNT(*) as t FROM purchases WHERE status='confirmed'");
     const totalBurned = await pool.query("SELECT COALESCE(SUM(tokens_burned),0) as t FROM burn_log");
     const totalCredits = await pool.query("SELECT COALESCE(SUM(amount_usd),0) as t FROM terminal_credits");
@@ -841,6 +850,7 @@ router.get('/report/financial', adminAuth, async (req, res) => {
       summary: {
         total_raised_usd: totalRaised.rows[0].t,
         total_buyers: parseInt(totalBuyers.rows[0].t),
+        total_wallets_connected: parseInt(totalWalletsConnected.rows[0].t),
         total_purchases: parseInt(totalPurchases.rows[0].t),
         total_tokens_burned: totalBurned.rows[0].t,
         total_terminal_credits_issued: totalCredits.rows[0].t,

@@ -77,12 +77,17 @@ router.get('/scenarios', (req, res) => {
 router.get('/stats', async (req, res) => {
   try {
     const raised = await pool.query('SELECT COALESCE(SUM(total_raised_usd),0) as t FROM tiers');
-    const buyers = await pool.query('SELECT COUNT(*) as t FROM buyers');
+    // total_buyers = wallets with at least one confirmed purchase — NOT
+    // every row in `buyers`, which also includes wallets that only created
+    // an intent (or connected) and never actually paid.
+    const buyers = await pool.query("SELECT COUNT(DISTINCT buyer_wallet) as t FROM purchases WHERE status = 'confirmed'");
+    const walletsConnected = await pool.query('SELECT COUNT(*) as t FROM buyers');
     const activeTier = await pool.query('SELECT * FROM tiers WHERE is_active = true LIMIT 1');
 
     res.json({
       total_raised_usd: parseFloat(raised.rows[0].t),
       total_buyers: parseInt(buyers.rows[0].t, 10),
+      total_wallets_connected: parseInt(walletsConnected.rows[0].t, 10),
       current_tier: activeTier.rows[0] || null,
     });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }

@@ -25,8 +25,11 @@ async function reconcileEthereum() {
   );
 
   const dbResult = await pool.query(
-    // OTC excluded — its payment was off-chain (rule #13)
-    "SELECT tx_hash FROM purchases WHERE chain = 'ethereum' AND created_at > NOW() - ($1 || ' hours')::interval",
+    // OTC excluded — its payment was off-chain (rule #13). Only confirmed
+    // purchases count as "records to match" — a pending/expired/needs_pricing
+    // intent that never got a payment (or hasn't been matched yet) is not a
+    // reconciliation discrepancy, it's normal presale funnel drop-off.
+    "SELECT tx_hash FROM purchases WHERE chain = 'ethereum' AND status = 'confirmed' AND created_at > NOW() - ($1 || ' hours')::interval",
     [PERIOD_HOURS]
   );
 
@@ -45,13 +48,19 @@ async function reconcileTron() {
   });
 
   const onChainTxs = response.data.data || [];
+  // Only confirmed purchases count as "records to match" — see the same
+  // note in reconcileEthereum() above.
   const dbResult = await pool.query(
-    "SELECT tx_hash FROM purchases WHERE chain = 'tron' AND created_at > NOW() - INTERVAL '24 hours'"
+    "SELECT tx_hash FROM purchases WHERE chain = 'tron' AND status = 'confirmed' AND created_at > NOW() - INTERVAL '24 hours'"
   );
 
   return buildResult('tron', onChainTxs.map(tx => tx.transaction_id), dbResult.rows.map(r => r.tx_hash));
 }
 
+// `dbHashesArr` is expected to already be filtered to status = 'confirmed'
+// by the caller — total_database_records/matched below are just derived
+// counts over whatever was passed in, so they now mean "confirmed purchases
+// only" rather than "every purchases row," matching the fix above.
 async function buildResult(chain, chainHashesArr, dbHashesArr) {
   const dbHashes = new Set(dbHashesArr);
   const chainHashes = new Set(chainHashesArr);
