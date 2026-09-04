@@ -1,5 +1,5 @@
 -- ══════════════════════════════════════════════════
--- FLOWDEX PROTOCOL DATABASE V2 — 31 TABLES
+-- FLOWDEX PROTOCOL DATABASE V2 — 32 TABLES
 -- Run via: npm run db:setup
 -- ══════════════════════════════════════════════════
 
@@ -534,4 +534,15 @@ CREATE TABLE IF NOT EXISTS admin_backup_codes (
   is_used BOOLEAN DEFAULT false,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   used_at TIMESTAMPTZ
+);
+
+-- ── Table 32: cms_settings ──
+-- Flat key/value store for admin-configurable settings that aren't page
+-- content (e.g. sendgrid_api_key). Plain text, not encrypted — acceptable
+-- since every route that reads/writes this table is super_admin-gated.
+CREATE TABLE IF NOT EXISTS cms_settings (
+  id SERIAL PRIMARY KEY,
+  key VARCHAR(100) NOT NULL UNIQUE,
+  value TEXT,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );

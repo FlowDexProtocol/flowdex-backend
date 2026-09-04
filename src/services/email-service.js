@@ -17,11 +17,27 @@ dayjs.extend(utc);
 dayjs.extend(tz);
 
 const TZ = process.env.TIMEZONE || 'Asia/Dubai';
-const API_KEY = process.env.SENDGRID_API_KEY;
 const FROM = process.env.EMAIL_FROM || 'noreply@flowdexprotocol.com';
 const FRONTEND_URL = (process.env.FRONTEND_URL || 'https://flowdexprotocol.com').split(',')[0].trim().replace(/\/$/, '');
 
-if (API_KEY) sgMail.setApiKey(API_KEY);
+// Resolves the effective SendGrid API key: cms_settings (admin-set via
+// PUT /admin/settings/sendgrid) takes priority, falling back to the
+// SENDGRID_API_KEY env var. Re-checked on every send rather than cached at
+// module load, so an admin updating the key via the dashboard takes effect
+// immediately — no redeploy needed. The cms_settings query is wrapped in
+// its own try/catch: on a database that hasn't been migrated to include
+// that table yet, this silently falls through to the env var instead of
+// breaking every email send.
+async function getApiKey() {
+  try {
+    const result = await pool.query("SELECT value FROM cms_settings WHERE key = 'sendgrid_api_key'");
+    const dbKey = result.rows[0]?.value;
+    if (dbKey) return dbKey;
+  } catch (err) {
+    console.error('[EMAIL] cms_settings lookup failed, falling back to env var:', err.message);
+  }
+  return process.env.SENDGRID_API_KEY || null;
+}
 
 const EXPLORER_TX_URL = {
   ethereum: 'https://etherscan.io/tx/',
@@ -94,11 +110,43 @@ function statRow(label, value) {
 }
 
 async function sendEmail(to, subject, html) {
-  if (!API_KEY || !to) return;
+  if (!to) return;
+  const apiKey = await getApiKey();
+  if (!apiKey) return;
   try {
+    sgMail.setApiKey(apiKey);
     await sgMail.send({ to, from: FROM, subject, html });
   } catch (err) {
     console.error('[EMAIL] Failed to send "' + subject + '" to ' + to + ':', err.message);
+  }
+}
+
+// Like sendEmail, but surfaces the real result instead of failing silently —
+// used only by the admin-triggered "Send Test Email" action, where swallowing
+// the error would defeat the entire point of testing.
+async function sendTestEmail(to) {
+  const apiKey = await getApiKey();
+  if (!apiKey) return { success: false, error: 'No SendGrid API key configured (set one via Admin Settings, or the SENDGRID_API_KEY env var).' };
+
+  const html = wrapEmail(
+    'This is a test email from your FlowDex admin dashboard.',
+    `
+    <h2 style="margin:0 0 4px 0;color:#ffffff;font-size:18px;">Test Email</h2>
+    <p style="margin:0 0 20px 0;color:#8C9BB5;">This is a test email sent from the FlowDex admin dashboard to confirm your SendGrid configuration is working.</p>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+      ${statRow('Sent At', dayjs().tz(TZ).format('YYYY-MM-DD HH:mm:ss') + ' (' + TZ + ')')}
+      ${statRow('Sent To', to)}
+    </table>
+    `
+  );
+
+  try {
+    sgMail.setApiKey(apiKey);
+    await sgMail.send({ to, from: FROM, subject: 'FlowDex Admin — Test Email', html });
+    return { success: true, message: 'Test email sent to ' + to + '.' };
+  } catch (err) {
+    const detail = err.response?.body?.errors?.[0]?.message || err.message;
+    return { success: false, error: detail };
   }
 }
 
@@ -107,7 +155,6 @@ async function sendEmail(to, subject, html) {
 //    file, matched by wallet address in email_subscribers)
 // ══════════════════════════════════════════════════
 async function sendPurchaseConfirmation(purchase, tier) {
-  if (!API_KEY) return;
   try {
     const sub = await pool.query(
       `SELECT email FROM email_subscribers WHERE wallet_address = $1 AND is_active = true
@@ -166,7 +213,6 @@ async function sendPurchaseConfirmation(purchase, tier) {
 //    they referred completes a purchase
 // ══════════════════════════════════════════════════
 async function sendReferralNotification(referrerWallet, purchase) {
-  if (!API_KEY) return;
   try {
     const sub = await pool.query(
       `SELECT email FROM email_subscribers WHERE wallet_address = $1 AND is_active = true
@@ -209,7 +255,6 @@ async function sendReferralNotification(referrerWallet, purchase) {
 //    purchase exceeds $10,000
 // ══════════════════════════════════════════════════
 async function sendLargePurchaseAlert(purchase) {
-  if (!API_KEY) return;
   try {
     const admins = await pool.query(
       `SELECT email FROM admin_users WHERE role = 'super_admin' AND is_active = true AND email IS NOT NULL AND email != ''`
@@ -246,7 +291,6 @@ async function sendLargePurchaseAlert(purchase) {
 //    admin_users row with role='super_admin' and an email on file
 // ══════════════════════════════════════════════════
 async function sendDailyAdminDigest() {
-  if (!API_KEY) return;
   try {
     const admins = await pool.query(
       `SELECT email FROM admin_users WHERE role = 'super_admin' AND is_active = true AND email IS NOT NULL AND email != ''`
@@ -319,4 +363,5 @@ module.exports = {
   sendReferralNotification,
   sendLargePurchaseAlert,
   sendDailyAdminDigest,
+  sendTestEmail,
 };

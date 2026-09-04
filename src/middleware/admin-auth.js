@@ -1,7 +1,7 @@
 // ══════════════════════════════════════════════════
 // src/middleware/admin-auth.js
 // Verifies the admin JWT issued by POST /admin/login.
-// Payload shape (both login paths): { user_id, username, role }.
+// Payload shape (both login paths): { user_id, username, role, display_name }.
 // role is one of 'super_admin' | 'editor' | 'viewer' — the legacy
 // env-var bootstrap login also issues 'super_admin' (with user_id: 0,
 // no real admin_users row) so it keeps full access under the new scheme.
@@ -20,7 +20,7 @@ function adminAuth(req, res, next) {
     if (!VALID_ROLES.includes(decoded.role)) {
       return res.status(401).json({ success: false, error: 'Invalid token', code: 'NOT_ADMIN' });
     }
-    req.admin = { user_id: decoded.user_id, username: decoded.username, role: decoded.role };
+    req.admin = { user_id: decoded.user_id, username: decoded.username, role: decoded.role, display_name: decoded.display_name };
     next();
   } catch (err) {
     return res.status(401).json({ success: false, error: 'Invalid token', code: 'TOKEN_INVALID' });

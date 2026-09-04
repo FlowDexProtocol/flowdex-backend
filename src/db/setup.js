@@ -12,7 +12,7 @@ async function setup() {
     console.log('Connecting to database...');
     const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
     await pool.query(schema);
-    console.log('All 31 tables created');
+    console.log('All 32 tables created');
 
     // Migration-safe: CREATE TABLE IF NOT EXISTS in schema.sql only adds the
     // purchases_tx_hash_unique constraint on a brand-new table. On a database

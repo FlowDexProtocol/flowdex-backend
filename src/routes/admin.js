@@ -159,7 +159,7 @@ router.post('/login', loginRateLimit, async (req, res) => {
       recordSuccessfulLogin(req);
       await pool.query('UPDATE admin_users SET last_login = NOW() WHERE id = $1', [user.id]);
       const token = jwt.sign(
-        { user_id: user.id, username: user.username, role: user.role },
+        { user_id: user.id, username: user.username, role: user.role, display_name: user.display_name || user.username },
         process.env.JWT_SECRET, { expiresIn: '24h' }
       );
       await logAudit('admin_login', null, null, null, null,
@@ -192,19 +192,22 @@ router.post('/login', loginRateLimit, async (req, res) => {
     }
 
     recordSuccessfulLogin(req);
-    const token = jwt.sign({ user_id: 0, username, role: 'super_admin' }, process.env.JWT_SECRET, { expiresIn: '24h' });
+    const token = jwt.sign(
+      { user_id: 0, username, role: 'super_admin', display_name: username },
+      process.env.JWT_SECRET, { expiresIn: '24h' }
+    );
     await logAudit('admin_login', null, null, null, null, { username, via: backup_code ? 'backup_code' : 'totp' },
       'Admin logged in (legacy env-var path)', 'admin (legacy)', req.ip);
     res.json({ success: true, token });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
-// POST /admin/change-password — { current_password, new_password }, own
-// password only. If the caller has a real admin_users row (user_id > 0),
-// updates it (bcrypt hash) directly — persists for real, unlike the old
-// env-var-only version. Falls back to the legacy in-memory env var update
-// only for the bootstrap user_id === 0 case.
-router.post('/change-password', adminAuth, requireRole('super_admin'), async (req, res) => {
+// Shared handler for both /admin/change-password (super_admin-only route,
+// kept for backward compat) and /admin/change-my-password (all roles) —
+// own password only, either way. If the caller has a real admin_users row
+// (user_id > 0), updates it (bcrypt hash) directly. Falls back to the
+// legacy in-memory env var update only for the bootstrap user_id === 0 case.
+async function changeOwnPassword(req, res) {
   try {
     const { current_password, new_password } = req.body;
     if (!current_password || !new_password) {
@@ -225,7 +228,7 @@ router.post('/change-password', adminAuth, requireRole('super_admin'), async (re
       const newHash = await bcrypt.hash(new_password, 12);
       await pool.query('UPDATE admin_users SET password_hash = $1 WHERE id = $2', [newHash, req.admin.user_id]);
 
-      await logAudit('admin_password_changed', null, null, null, null, null,
+      await logAudit('password_changed', null, null, null, null, { user_id: req.admin.user_id },
         'Admin changed their own password', req.admin.username, req.ip);
       return res.json({ success: true, message: 'Password changed.' });
     }
@@ -237,7 +240,7 @@ router.post('/change-password', adminAuth, requireRole('super_admin'), async (re
     process.env.ADMIN_PASSWORD = new_password;
 
     await logAudit(
-      'admin_password_changed', null, null, null, null, null,
+      'password_changed', null, null, null, null, { user_id: 0 },
       'Admin password changed — in-memory only, update the ADMIN_PASSWORD env var (e.g. in Coolify) to persist across redeploys',
       'admin (legacy)', req.ip
     );
@@ -246,12 +249,20 @@ router.post('/change-password', adminAuth, requireRole('super_admin'), async (re
       message: 'Password changed. This only persists until the next redeploy — update your Coolify env var to make it permanent.',
     });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
-});
+}
 
-// POST /admin/2fa/generate-backup-codes — regenerates the CALLER's backup
-// code set, invalidating any previous batch OF THEIRS (scoped by admin_id —
-// does not touch other users' codes). Returns the plain codes ONCE.
-router.post('/2fa/generate-backup-codes', adminAuth, requireRole('super_admin'), async (req, res) => {
+// POST /admin/change-password — kept super_admin-only for backward compat.
+router.post('/change-password', adminAuth, requireRole('super_admin'), changeOwnPassword);
+
+// POST /admin/change-my-password — same logic, available to every role.
+router.post('/change-my-password', adminAuth, changeOwnPassword);
+
+// Shared handler for both /admin/2fa/generate-backup-codes (super_admin-only
+// route, kept for backward compat) and /admin/my-backup-codes (all roles) —
+// regenerates the CALLER's backup code set, invalidating any previous batch
+// OF THEIRS (scoped by admin_id — does not touch other users' codes).
+// Returns the plain codes ONCE.
+async function generateOwnBackupCodes(req, res) {
   try {
     const codes = Array.from({ length: 10 }, generateBackupCode);
     const adminId = req.admin.user_id || null;
@@ -263,12 +274,18 @@ router.post('/2fa/generate-backup-codes', adminAuth, requireRole('super_admin'),
     }
 
     await logAudit(
-      'admin_backup_codes_generated', null, null, null, null, { count: codes.length },
+      'admin_backup_codes_generated', null, null, null, null, { count: codes.length, user_id: adminId },
       'Admin generated new 2FA backup codes — previous batch invalidated', req.admin.username, req.ip
     );
     res.json({ success: true, codes });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
-});
+}
+
+// POST /admin/2fa/generate-backup-codes — kept super_admin-only for backward compat.
+router.post('/2fa/generate-backup-codes', adminAuth, requireRole('super_admin'), generateOwnBackupCodes);
+
+// POST /admin/my-backup-codes — same logic, available to every role.
+router.post('/my-backup-codes', adminAuth, generateOwnBackupCodes);
 
 // ══ ADMIN USER MANAGEMENT (super_admin only) ══
 
@@ -418,6 +435,53 @@ router.get('/2fa-setup', async (req, res) => {
   try {
     const setup = await generate2FASetup();
     res.json({ success: true, ...setup });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// ══ SETTINGS (super_admin only) ══
+
+// PUT /admin/settings/sendgrid — { api_key } — stores plaintext in
+// cms_settings (acceptable: every route touching this table is
+// super_admin-gated). email-service.js reads this first, falling back to
+// the SENDGRID_API_KEY env var if no row is set.
+router.put('/settings/sendgrid', adminAuth, requireRole('super_admin'), async (req, res) => {
+  try {
+    const { api_key } = req.body;
+    if (!api_key || typeof api_key !== 'string') {
+      return res.status(400).json({ success: false, error: 'api_key is required' });
+    }
+
+    await pool.query(
+      `INSERT INTO cms_settings (key, value, updated_at) VALUES ('sendgrid_api_key', $1, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()`,
+      [api_key]
+    );
+
+    await logAudit('sendgrid_key_updated', null, null, null, null, null,
+      'Admin updated the SendGrid API key', req.admin.username, req.ip);
+    res.json({ success: true, message: 'SendGrid API key saved.' });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// POST /admin/settings/test-email — { to_email } — sends a real test email
+// using the stored/env SendGrid key and surfaces the actual send result
+// (unlike every other email in this app, which is deliberately fail-silent
+// — an admin explicitly asking "does this work?" needs a real answer).
+router.post('/settings/test-email', adminAuth, requireRole('super_admin'), async (req, res) => {
+  try {
+    const { to_email } = req.body;
+    if (!to_email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to_email)) {
+      return res.status(400).json({ success: false, error: 'A valid to_email is required' });
+    }
+
+    const { sendTestEmail } = require('../services/email-service');
+    const result = await sendTestEmail(to_email);
+
+    await logAudit('test_email_sent', null, null, null, null, { to_email, success: result.success },
+      'Admin sent a test email', req.admin.username, req.ip);
+
+    if (!result.success) return res.status(502).json(result);
+    res.json(result);
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
