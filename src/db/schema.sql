@@ -1,5 +1,5 @@
 -- ══════════════════════════════════════════════════
--- FLOWDEX PROTOCOL DATABASE V2 — 30 TABLES
+-- FLOWDEX PROTOCOL DATABASE V2 — 31 TABLES
 -- Run via: npm run db:setup
 -- ══════════════════════════════════════════════════
 
@@ -495,14 +495,41 @@ CREATE INDEX IF NOT EXISTS idx_cms_team_active ON cms_team(is_active, sort_order
 CREATE TABLE IF NOT EXISTS email_subscribers (
   id SERIAL PRIMARY KEY,
   email VARCHAR(255) NOT NULL UNIQUE,
+  -- Nullable: the landing-page "Get Updates" form (/api/subscribe) doesn't
+  -- collect a wallet, but the purchase-intent flow does — links a
+  -- subscriber to the wallet whose purchase confirmations they get.
+  wallet_address VARCHAR(100),
   subscribed_at TIMESTAMPTZ DEFAULT NOW(),
   is_active BOOLEAN DEFAULT true
 );
+CREATE INDEX IF NOT EXISTS idx_email_subscribers_wallet ON email_subscribers(wallet_address);
 
--- ── Table 30: admin_backup_codes ──
--- 2FA backup codes — single global admin, so no per-user column.
+-- ── Table 30: admin_users ──
+-- Defined before admin_backup_codes since that table's admin_id column
+-- references this one — CREATE TABLE IF NOT EXISTS still requires the
+-- referenced table to exist first on a fresh install.
+CREATE TABLE IF NOT EXISTS admin_users (
+  id SERIAL PRIMARY KEY,
+  username VARCHAR(50) NOT NULL UNIQUE,
+  password_hash VARCHAR(255) NOT NULL,
+  role VARCHAR(20) NOT NULL DEFAULT 'viewer',
+  display_name VARCHAR(100),
+  email VARCHAR(255),
+  totp_secret VARCHAR(64),
+  is_active BOOLEAN DEFAULT true,
+  last_login TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  created_by INTEGER
+);
+
+-- ── Table 31: admin_backup_codes ──
+-- Per-user 2FA backup codes. admin_id is nullable — codes generated before
+-- the multi-admin migration (or for the env-var bootstrap super_admin
+-- before it has a real admin_users row) have no owning user, and are
+-- treated as available to the legacy login path only.
 CREATE TABLE IF NOT EXISTS admin_backup_codes (
   id SERIAL PRIMARY KEY,
+  admin_id INTEGER REFERENCES admin_users(id),
   code_hash VARCHAR(255) NOT NULL,
   is_used BOOLEAN DEFAULT false,
   created_at TIMESTAMPTZ DEFAULT NOW(),

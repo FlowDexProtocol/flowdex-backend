@@ -27,6 +27,7 @@ const { processReferralBonus } = require('./referral-service');
 const { generateClaimsForTier } = require('./claims-service');
 const { logAudit } = require('./audit-service');
 const { alertLargePurchase, alertTierNearlyFull, alertTierAdvanced, alertUnknownToken, alertSupplyLow } = require('./alert-service');
+const { sendPurchaseConfirmation, sendReferralNotification, sendLargePurchaseAlert } = require('./email-service');
 
 const TZ = process.env.TIMEZONE || 'Asia/Dubai';
 
@@ -302,6 +303,23 @@ async function processPayment({ senderWallet, amount, currency, chain, txHash, t
       await alertLargePurchase(buyerWallet, finalUsdValue, tokensAllocated);
     }
 
+    // ── Post-commit emails — never allowed to affect the purchase result ──
+    try {
+      await sendPurchaseConfirmation(purchase, tier);
+      if (purchase.referred_by_code) {
+        const referrerResult = await pool.query(
+          'SELECT buyer_wallet FROM buyers WHERE referral_code = $1', [purchase.referred_by_code]
+        );
+        const referrerWallet = referrerResult.rows[0]?.buyer_wallet;
+        if (referrerWallet) await sendReferralNotification(referrerWallet, purchase);
+      }
+      if (finalUsdValue > 10000) {
+        await sendLargePurchaseAlert(purchase);
+      }
+    } catch (emailErr) {
+      console.error('[EMAIL] Post-purchase email dispatch failed:', emailErr.message);
+    }
+
     const updatedTier = await pool.query('SELECT * FROM tiers WHERE id = $1', [tier.id]);
     const t = updatedTier.rows[0];
     const pctFull = (parseFloat(t.total_raised_usd) / parseFloat(t.hard_cap_usd)) * 100;
@@ -377,6 +395,26 @@ async function confirmPayment(purchaseId, actualCryptoAmount) {
     }
 
     await client.query('COMMIT');
+
+    // ── Post-commit emails — never allowed to affect the confirmation result ──
+    try {
+      const tierResult = await pool.query('SELECT * FROM tiers WHERE id = $1', [purchase.tier_at_purchase]);
+      const tier = tierResult.rows[0];
+      if (tier) await sendPurchaseConfirmation(purchase, tier);
+      if (purchase.referred_by_code) {
+        const referrerResult = await pool.query(
+          'SELECT buyer_wallet FROM buyers WHERE referral_code = $1', [purchase.referred_by_code]
+        );
+        const referrerWallet = referrerResult.rows[0]?.buyer_wallet;
+        if (referrerWallet) await sendReferralNotification(referrerWallet, purchase);
+      }
+      if (parseFloat(purchase.usd_value) > 10000) {
+        await sendLargePurchaseAlert(purchase);
+      }
+    } catch (emailErr) {
+      console.error('[EMAIL] Post-purchase email dispatch failed:', emailErr.message);
+    }
+
     return { success: true, purchaseId };
   } catch (err) {
     await client.query('ROLLBACK');

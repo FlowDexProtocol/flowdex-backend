@@ -10,7 +10,8 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const pool = require('../db/pool');
 const { adminAuth } = require('../middleware/admin-auth');
-const { verify2FA, generate2FASetup } = require('../middleware/admin-2fa');
+const { requireRole } = require('../middleware/require-role');
+const { verify2FA, generate2FASetup, generateTotpSecret } = require('../middleware/admin-2fa');
 const { loginRateLimit, recordFailedLogin, recordSuccessfulLogin } = require('../middleware/admin-login-rate-limit');
 const { logAudit } = require('../services/audit-service');
 const { createOtcAllocation, processOtcDrip } = require('../services/otc-service');
@@ -59,15 +60,48 @@ function sendCsv(res, name, rows) {
   res.send(toCsv(rows));
 }
 
+function truncateWallet(w) {
+  if (!w || w.length < 12) return w;
+  return w.slice(0, 6) + '...' + w.slice(-4);
+}
+
+// Editor role gets read access to purchases/buyers (not a route block —
+// see requireRole('editor') on the CMS mount for the route-level gate) but
+// with wallet addresses truncated and location/PII-adjacent fields
+// dropped. Aggregate financial figures (usd_value, tokens_allocated,
+// total_usd_spent, etc.) stay visible — those are needed for the CMS/
+// content-editor's day-to-day judgment calls and aren't identifying on
+// their own. super_admin sees the row unmodified.
+function redactPurchaseForEditor(row, role) {
+  if (role !== 'editor') return row;
+  const { buyer_wallet, buyer_country, buyer_state, buyer_city, buyer_ip_hash, ...rest } = row;
+  return { ...rest, buyer_wallet: truncateWallet(buyer_wallet) };
+}
+
+function redactBuyerForEditor(row, role) {
+  if (role !== 'editor') return row;
+  const { buyer_wallet, country, state, city, tag, ...rest } = row;
+  return { ...rest, buyer_wallet: truncateWallet(buyer_wallet) };
+}
+
 // ══ AUTH ══
 
 // Checks a plaintext backup code against the stored bcrypt hashes and
 // consumes it (one-time use) on match. O(unused codes) bcrypt compares —
 // there's no way to index a salted hash for direct lookup, and the unused
 // set is small (starts at 10 per generation).
-async function verifyAndConsumeBackupCode(code) {
+//
+// adminId scopes the search: a real admin_users login only matches codes
+// generated FOR that user; the legacy bootstrap login (adminId = null)
+// only matches codes with no owning user (generated before any
+// admin_users row existed). `IS NOT DISTINCT FROM` is NULL-safe equality —
+// plain `=` never matches NULL, even against another NULL.
+async function verifyAndConsumeBackupCode(code, adminId = null) {
   if (!code) return false;
-  const result = await pool.query('SELECT id, code_hash FROM admin_backup_codes WHERE is_used = false');
+  const result = await pool.query(
+    'SELECT id, code_hash FROM admin_backup_codes WHERE is_used = false AND admin_id IS NOT DISTINCT FROM $1',
+    [adminId]
+  );
   for (const row of result.rows) {
     const match = await bcrypt.compare(code, row.code_hash);
     if (match) {
@@ -87,23 +121,68 @@ function generateBackupCode() {
   return code;
 }
 
-// POST /admin/login — username + plaintext password + TOTP 2FA (or a backup code)
+// POST /admin/login — username + password + TOTP 2FA (or a backup code).
+// Checks admin_users first (bcrypt password, per-user TOTP secret, per-user
+// backup codes); falls back to the legacy ADMIN_USERNAME/ADMIN_PASSWORD/
+// ADMIN_2FA_SECRET env-var login only when there's no matching active
+// admin_users row — in practice this means "before setup.js has seeded the
+// bootstrap super_admin row," since that seed uses these same env vars.
+// Once seeded, the identical credentials flow through the admin_users
+// branch instead (bcrypt-verified, not plaintext) — seamless migration.
 router.post('/login', loginRateLimit, async (req, res) => {
   try {
     const { username, password, totp_code, backup_code } = req.body;
+
+    const userResult = await pool.query(
+      'SELECT * FROM admin_users WHERE username = $1 AND is_active = true', [username]
+    );
+
+    if (userResult.rows.length > 0) {
+      const user = userResult.rows[0];
+      const validPassword = await bcrypt.compare(password || '', user.password_hash);
+      if (!validPassword) {
+        recordFailedLogin(req);
+        return res.status(401).json({ success: false, error: 'Invalid credentials' });
+      }
+
+      const secondFactorOk = backup_code
+        ? await verifyAndConsumeBackupCode(backup_code, user.id)
+        : verify2FA(totp_code, user.totp_secret);
+      if (!secondFactorOk) {
+        recordFailedLogin(req);
+        return res.status(401).json({
+          success: false,
+          error: backup_code ? 'Invalid or already-used backup code' : 'Invalid 2FA code',
+        });
+      }
+
+      recordSuccessfulLogin(req);
+      await pool.query('UPDATE admin_users SET last_login = NOW() WHERE id = $1', [user.id]);
+      const token = jwt.sign(
+        { user_id: user.id, username: user.username, role: user.role },
+        process.env.JWT_SECRET, { expiresIn: '24h' }
+      );
+      await logAudit('admin_login', null, null, null, null,
+        { username: user.username, role: user.role, via: backup_code ? 'backup_code' : 'totp' },
+        'Admin logged in', user.username, req.ip);
+      return res.json({ success: true, token });
+    }
+
+    // ── Legacy bootstrap fallback ──
     if (username !== process.env.ADMIN_USERNAME) {
       recordFailedLogin(req);
       return res.status(401).json({ success: false, error: 'Invalid credentials' });
     }
 
-    // 🔴 ADMIN_PASSWORD must be set in .env (plaintext)
+    // 🔴 ADMIN_PASSWORD must be set in .env (plaintext) — only reachable
+    // pre-migration; see comment above.
     const validPassword = (password === process.env.ADMIN_PASSWORD);
     if (!validPassword) {
       recordFailedLogin(req);
       return res.status(401).json({ success: false, error: 'Invalid credentials' });
     }
 
-    const secondFactorOk = backup_code ? await verifyAndConsumeBackupCode(backup_code) : verify2FA(totp_code);
+    const secondFactorOk = backup_code ? await verifyAndConsumeBackupCode(backup_code, null) : verify2FA(totp_code);
     if (!secondFactorOk) {
       recordFailedLogin(req);
       return res.status(401).json({
@@ -113,34 +192,54 @@ router.post('/login', loginRateLimit, async (req, res) => {
     }
 
     recordSuccessfulLogin(req);
-    const token = jwt.sign({ username, role: 'admin' }, process.env.JWT_SECRET, { expiresIn: '24h' });
-    await logAudit('admin_login', null, null, null, null, { username, via: backup_code ? 'backup_code' : 'totp' }, 'Admin logged in', username, req.ip);
+    const token = jwt.sign({ user_id: 0, username, role: 'super_admin' }, process.env.JWT_SECRET, { expiresIn: '24h' });
+    await logAudit('admin_login', null, null, null, null, { username, via: backup_code ? 'backup_code' : 'totp' },
+      'Admin logged in (legacy env-var path)', 'admin (legacy)', req.ip);
     res.json({ success: true, token });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
-// POST /admin/change-password — { current_password, new_password }
-// Only persists in memory until the next redeploy — the admin must also
-// update the ADMIN_PASSWORD env var (e.g. in Coolify) for it to stick.
-router.post('/change-password', adminAuth, async (req, res) => {
+// POST /admin/change-password — { current_password, new_password }, own
+// password only. If the caller has a real admin_users row (user_id > 0),
+// updates it (bcrypt hash) directly — persists for real, unlike the old
+// env-var-only version. Falls back to the legacy in-memory env var update
+// only for the bootstrap user_id === 0 case.
+router.post('/change-password', adminAuth, requireRole('super_admin'), async (req, res) => {
   try {
     const { current_password, new_password } = req.body;
     if (!current_password || !new_password) {
       return res.status(400).json({ success: false, error: 'current_password and new_password are required' });
     }
-    if (current_password !== process.env.ADMIN_PASSWORD) {
-      return res.status(401).json({ success: false, error: 'Current password is incorrect' });
-    }
     if (new_password.length < 8) {
       return res.status(400).json({ success: false, error: 'New password must be at least 8 characters' });
     }
 
+    if (req.admin.user_id) {
+      const userResult = await pool.query('SELECT * FROM admin_users WHERE id = $1', [req.admin.user_id]);
+      if (userResult.rows.length === 0) return res.status(404).json({ success: false, error: 'User not found' });
+      const user = userResult.rows[0];
+
+      const validPassword = await bcrypt.compare(current_password, user.password_hash);
+      if (!validPassword) return res.status(401).json({ success: false, error: 'Current password is incorrect' });
+
+      const newHash = await bcrypt.hash(new_password, 12);
+      await pool.query('UPDATE admin_users SET password_hash = $1 WHERE id = $2', [newHash, req.admin.user_id]);
+
+      await logAudit('admin_password_changed', null, null, null, null, null,
+        'Admin changed their own password', req.admin.username, req.ip);
+      return res.json({ success: true, message: 'Password changed.' });
+    }
+
+    // Legacy bootstrap user_id === 0 — no admin_users row to update yet.
+    if (current_password !== process.env.ADMIN_PASSWORD) {
+      return res.status(401).json({ success: false, error: 'Current password is incorrect' });
+    }
     process.env.ADMIN_PASSWORD = new_password;
 
     await logAudit(
       'admin_password_changed', null, null, null, null, null,
       'Admin password changed — in-memory only, update the ADMIN_PASSWORD env var (e.g. in Coolify) to persist across redeploys',
-      req.admin.username, req.ip
+      'admin (legacy)', req.ip
     );
     res.json({
       success: true,
@@ -149,16 +248,18 @@ router.post('/change-password', adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
-// POST /admin/2fa/generate-backup-codes — regenerates the backup code set,
-// invalidating any previous batch. Returns the plain codes ONCE.
-router.post('/2fa/generate-backup-codes', adminAuth, async (req, res) => {
+// POST /admin/2fa/generate-backup-codes — regenerates the CALLER's backup
+// code set, invalidating any previous batch OF THEIRS (scoped by admin_id —
+// does not touch other users' codes). Returns the plain codes ONCE.
+router.post('/2fa/generate-backup-codes', adminAuth, requireRole('super_admin'), async (req, res) => {
   try {
     const codes = Array.from({ length: 10 }, generateBackupCode);
+    const adminId = req.admin.user_id || null;
 
-    await pool.query('DELETE FROM admin_backup_codes');
+    await pool.query('DELETE FROM admin_backup_codes WHERE admin_id IS NOT DISTINCT FROM $1', [adminId]);
     for (const code of codes) {
       const hash = await bcrypt.hash(code, 10);
-      await pool.query('INSERT INTO admin_backup_codes (code_hash) VALUES ($1)', [hash]);
+      await pool.query('INSERT INTO admin_backup_codes (admin_id, code_hash) VALUES ($1, $2)', [adminId, hash]);
     }
 
     await logAudit(
@@ -166,6 +267,149 @@ router.post('/2fa/generate-backup-codes', adminAuth, async (req, res) => {
       'Admin generated new 2FA backup codes — previous batch invalidated', req.admin.username, req.ip
     );
     res.json({ success: true, codes });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// ══ ADMIN USER MANAGEMENT (super_admin only) ══
+
+// GET /admin/users — list, safe field subset only (no password_hash/totp_secret)
+router.get('/users', adminAuth, requireRole('super_admin'), async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, username, role, display_name, email, is_active, last_login, created_at FROM admin_users ORDER BY created_at ASC'
+    );
+    res.json({ success: true, users: result.rows });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// POST /admin/users — create { username, password, role, display_name, email }
+router.post('/users', adminAuth, requireRole('super_admin'), async (req, res) => {
+  try {
+    const { username, password, role, display_name, email } = req.body;
+    if (!username || !password || !role) {
+      return res.status(400).json({ success: false, error: 'username, password, and role are required' });
+    }
+    if (!['super_admin', 'editor', 'viewer'].includes(role)) {
+      return res.status(400).json({ success: false, error: 'role must be super_admin, editor, or viewer' });
+    }
+    if (password.length < 8) {
+      return res.status(400).json({ success: false, error: 'Password must be at least 8 characters' });
+    }
+
+    const existing = await pool.query('SELECT id FROM admin_users WHERE username = $1', [username]);
+    if (existing.rows.length > 0) return res.status(400).json({ success: false, error: 'Username already exists' });
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const totpSecret = generateTotpSecret();
+
+    const result = await pool.query(
+      `INSERT INTO admin_users (username, password_hash, role, display_name, email, totp_secret, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       RETURNING id, username, role, display_name, email, is_active, created_at`,
+      [username, passwordHash, role, display_name || null, email || null, totpSecret, req.admin.user_id || null]
+    );
+
+    await logAudit('admin_user_created', null, null, null, null,
+      { username, role }, 'New admin user created', req.admin.username, req.ip);
+
+    // totp_secret returned ONCE — never re-exposed after this response.
+    res.json({ success: true, user: result.rows[0], totp_secret: totpSecret });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// PUT /admin/users/:id — update { role, display_name, is_active, email }
+router.put('/users/:id', adminAuth, requireRole('super_admin'), async (req, res) => {
+  try {
+    const targetId = parseInt(req.params.id, 10);
+    const { role, display_name, is_active, email } = req.body;
+
+    if (targetId === req.admin.user_id) {
+      if (role !== undefined) return res.status(400).json({ success: false, error: 'Cannot change your own role' });
+      if (is_active === false) return res.status(400).json({ success: false, error: 'Cannot deactivate your own account' });
+    }
+    if (role !== undefined && !['super_admin', 'editor', 'viewer'].includes(role)) {
+      return res.status(400).json({ success: false, error: 'role must be super_admin, editor, or viewer' });
+    }
+
+    const existing = await pool.query('SELECT * FROM admin_users WHERE id = $1', [targetId]);
+    if (existing.rows.length === 0) return res.status(404).json({ success: false, error: 'User not found' });
+
+    const sets = [];
+    const params = [];
+    let i = 1;
+    if (role !== undefined) { sets.push(`role = $${i++}`); params.push(role); }
+    if (display_name !== undefined) { sets.push(`display_name = $${i++}`); params.push(display_name); }
+    if (is_active !== undefined) { sets.push(`is_active = $${i++}`); params.push(is_active); }
+    if (email !== undefined) { sets.push(`email = $${i++}`); params.push(email); }
+    if (sets.length === 0) return res.status(400).json({ success: false, error: 'No valid fields to update' });
+
+    params.push(targetId);
+    const result = await pool.query(
+      `UPDATE admin_users SET ${sets.join(', ')} WHERE id = $${params.length}
+       RETURNING id, username, role, display_name, email, is_active, last_login, created_at`,
+      params
+    );
+
+    await logAudit('admin_user_updated', null, null, null, existing.rows[0],
+      result.rows[0], 'Admin user updated', req.admin.username, req.ip);
+    res.json({ success: true, user: result.rows[0] });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// DELETE /admin/users/:id — soft delete (is_active = false)
+router.delete('/users/:id', adminAuth, requireRole('super_admin'), async (req, res) => {
+  try {
+    const targetId = parseInt(req.params.id, 10);
+    if (targetId === req.admin.user_id) {
+      return res.status(400).json({ success: false, error: 'Cannot delete your own account' });
+    }
+
+    const existing = await pool.query('SELECT * FROM admin_users WHERE id = $1', [targetId]);
+    if (existing.rows.length === 0) return res.status(404).json({ success: false, error: 'User not found' });
+
+    await pool.query('UPDATE admin_users SET is_active = false WHERE id = $1', [targetId]);
+    await logAudit('admin_user_deactivated', null, null, null, existing.rows[0],
+      { is_active: false }, 'Admin user soft-deleted', req.admin.username, req.ip);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// POST /admin/users/:id/reset-password — { new_password }
+router.post('/users/:id/reset-password', adminAuth, requireRole('super_admin'), async (req, res) => {
+  try {
+    const targetId = parseInt(req.params.id, 10);
+    const { new_password } = req.body;
+    if (!new_password || new_password.length < 8) {
+      return res.status(400).json({ success: false, error: 'new_password must be at least 8 characters' });
+    }
+
+    const existing = await pool.query('SELECT id, username FROM admin_users WHERE id = $1', [targetId]);
+    if (existing.rows.length === 0) return res.status(404).json({ success: false, error: 'User not found' });
+
+    const newHash = await bcrypt.hash(new_password, 12);
+    await pool.query('UPDATE admin_users SET password_hash = $1 WHERE id = $2', [newHash, targetId]);
+
+    await logAudit('admin_user_password_reset', null, null, null, null,
+      { target_user: existing.rows[0].username }, 'Admin reset another user’s password', req.admin.username, req.ip);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// POST /admin/users/:id/reset-2fa — new secret, returned ONCE
+router.post('/users/:id/reset-2fa', adminAuth, requireRole('super_admin'), async (req, res) => {
+  try {
+    const targetId = parseInt(req.params.id, 10);
+    const existing = await pool.query('SELECT id, username FROM admin_users WHERE id = $1', [targetId]);
+    if (existing.rows.length === 0) return res.status(404).json({ success: false, error: 'User not found' });
+
+    const totpSecret = generateTotpSecret();
+    await pool.query('UPDATE admin_users SET totp_secret = $1 WHERE id = $2', [totpSecret, targetId]);
+    // Old backup codes are tied to the old factor setup — invalidate them too.
+    await pool.query('DELETE FROM admin_backup_codes WHERE admin_id = $1', [targetId]);
+
+    await logAudit('admin_user_2fa_reset', null, null, null, null,
+      { target_user: existing.rows[0].username }, 'Admin reset another user’s 2FA secret', req.admin.username, req.ip);
+    res.json({ success: true, totp_secret: totpSecret });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
@@ -249,7 +493,7 @@ function buildPurchaseFilter(query) {
   return { where: conditions.length ? 'WHERE ' + conditions.join(' AND ') : '', params };
 }
 
-router.get('/purchases', adminAuth, async (req, res) => {
+router.get('/purchases', adminAuth, requireRole('editor'), async (req, res) => {
   try {
     const { where, params } = buildPurchaseFilter(req.query);
     const { page, limit, offset } = getPagination(req);
@@ -262,27 +506,30 @@ router.get('/purchases', adminAuth, async (req, res) => {
       `SELECT * FROM purchases ${where} ORDER BY ${orderBy} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
       [...params, limit, offset]
     );
+    const data = dataResult.rows.map((r) => redactPurchaseForEditor(r, req.admin.role));
 
-    res.json({ data: dataResult.rows, total, page, limit, pages: Math.max(1, Math.ceil(total / limit)) });
+    res.json({ data, total, page, limit, pages: Math.max(1, Math.ceil(total / limit)) });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
 // GET /admin/purchases/export — CSV export (legacy path, kept for compat)
-router.get('/purchases/export', adminAuth, async (req, res) => {
+router.get('/purchases/export', adminAuth, requireRole('editor'), async (req, res) => {
   try {
     const purchases = await pool.query('SELECT * FROM purchases ORDER BY created_at DESC');
-    sendCsv(res, 'purchases', purchases.rows);
+    const rows = purchases.rows.map((r) => redactPurchaseForEditor(r, req.admin.role));
+    sendCsv(res, 'purchases', rows);
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
 // GET /admin/purchases/export/csv — same as above, at the requested path.
 // Honors the same filters as GET /purchases but returns every matching row
 // (not just one page).
-router.get('/purchases/export/csv', adminAuth, async (req, res) => {
+router.get('/purchases/export/csv', adminAuth, requireRole('editor'), async (req, res) => {
   try {
     const { where, params } = buildPurchaseFilter(req.query);
     const result = await pool.query(`SELECT * FROM purchases ${where} ORDER BY created_at DESC`, params);
-    sendCsv(res, 'purchases', result.rows);
+    const rows = result.rows.map((r) => redactPurchaseForEditor(r, req.admin.role));
+    sendCsv(res, 'purchases', rows);
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
@@ -381,7 +628,7 @@ function buildBuyerFilter(query) {
   return { where: 'WHERE (buyer_wallet ILIKE $1 OR tag ILIKE $1)', params: [`%${search}%`] };
 }
 
-router.get('/buyers', adminAuth, async (req, res) => {
+router.get('/buyers', adminAuth, requireRole('editor'), async (req, res) => {
   try {
     const { where, params } = buildBuyerFilter(req.query);
     const { page, limit, offset } = getPagination(req);
@@ -394,16 +641,18 @@ router.get('/buyers', adminAuth, async (req, res) => {
       `SELECT * FROM buyers ${where} ORDER BY ${orderBy} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
       [...params, limit, offset]
     );
+    const data = dataResult.rows.map((r) => redactBuyerForEditor(r, req.admin.role));
 
-    res.json({ data: dataResult.rows, total, page, limit, pages: Math.max(1, Math.ceil(total / limit)) });
+    res.json({ data, total, page, limit, pages: Math.max(1, Math.ceil(total / limit)) });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
-router.get('/buyers/export/csv', adminAuth, async (req, res) => {
+router.get('/buyers/export/csv', adminAuth, requireRole('editor'), async (req, res) => {
   try {
     const { where, params } = buildBuyerFilter(req.query);
     const result = await pool.query(`SELECT * FROM buyers ${where} ORDER BY total_usd_spent DESC`, params);
-    sendCsv(res, 'buyers', result.rows);
+    const rows = result.rows.map((r) => redactBuyerForEditor(r, req.admin.role));
+    sendCsv(res, 'buyers', rows);
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
@@ -573,7 +822,7 @@ router.get('/reconciliation', adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
-router.post('/reconciliation/run', adminAuth, async (req, res) => {
+router.post('/reconciliation/run', adminAuth, requireRole('super_admin'), async (req, res) => {
   try {
     const results = await runReconciliation();
     res.json({ success: true, results });
@@ -589,14 +838,14 @@ router.get('/balance', adminAuth, async (req, res) => {
 
 // ══ WITHDRAWALS ══
 
-router.get('/withdrawals', adminAuth, async (req, res) => {
+router.get('/withdrawals', adminAuth, requireRole('super_admin'), async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM withdrawals ORDER BY created_at DESC LIMIT 500');
     res.json(result.rows);
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
-router.post('/withdrawals', adminAuth, async (req, res) => {
+router.post('/withdrawals', adminAuth, requireRole('super_admin'), async (req, res) => {
   try {
     const { tx_hash, chain, crypto_currency, crypto_amount, usd_value, recipient, purpose, notes } = req.body;
     if (!chain || !crypto_currency || !crypto_amount || !usd_value || !recipient || !purpose) {
@@ -655,7 +904,7 @@ router.get('/stats/geo-map', adminAuth, async (req, res) => {
 
 // ══ OTC INVESTOR DRIP ══
 
-router.post('/otc/allocate', adminAuth, async (req, res) => {
+router.post('/otc/allocate', adminAuth, requireRole('super_admin'), async (req, res) => {
   try {
     const { investor_name, investor_wallet, amount_usd, payment_reference, notes } = req.body;
     if (!investor_name || !investor_wallet) {
@@ -670,7 +919,7 @@ router.post('/otc/allocate', adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
-router.get('/otc/today', adminAuth, async (req, res) => {
+router.get('/otc/today', adminAuth, requireRole('super_admin'), async (req, res) => {
   try {
     const result = await pool.query("SELECT * FROM otc_allocations WHERE drip_status = 'active' ORDER BY drip_start_time DESC");
     const rows = result.rows.map(a => {
@@ -688,14 +937,14 @@ router.get('/otc/today', adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
-router.get('/otc/history', adminAuth, async (req, res) => {
+router.get('/otc/history', adminAuth, requireRole('super_admin'), async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM otc_allocations ORDER BY created_at DESC LIMIT 500');
     res.json(result.rows);
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
-router.post('/otc/pause/:id', adminAuth, async (req, res) => {
+router.post('/otc/pause/:id', adminAuth, requireRole('super_admin'), async (req, res) => {
   try {
     await pool.query("UPDATE otc_allocations SET drip_status = 'paused' WHERE id = $1 AND drip_status = 'active'", [req.params.id]);
     await logAudit('otc_paused', null, null, null, { status: 'active' }, { status: 'paused' }, 'OTC drip paused by admin', req.admin.username, req.ip);
@@ -703,7 +952,7 @@ router.post('/otc/pause/:id', adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
-router.post('/otc/resume/:id', adminAuth, async (req, res) => {
+router.post('/otc/resume/:id', adminAuth, requireRole('super_admin'), async (req, res) => {
   try {
     // Shift drip_start_time/drip_end_time forward by the paused duration so the remaining
     // amount releases over the remaining time, not instantly.
@@ -725,7 +974,7 @@ router.post('/otc/resume/:id', adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
-router.get('/otc/investor/:wallet', adminAuth, async (req, res) => {
+router.get('/otc/investor/:wallet', adminAuth, requireRole('super_admin'), async (req, res) => {
   try {
     const wallet = req.params.wallet.toLowerCase();
     const allocations = await pool.query('SELECT * FROM otc_allocations WHERE investor_wallet = $1 ORDER BY created_at DESC', [wallet]);
@@ -736,7 +985,7 @@ router.get('/otc/investor/:wallet', adminAuth, async (req, res) => {
 
 // ══ DISPLAY OVERRIDES ══
 
-router.get('/overrides', adminAuth, async (req, res) => {
+router.get('/overrides', adminAuth, requireRole('super_admin'), async (req, res) => {
   try {
     const overrides = await pool.query('SELECT * FROM display_overrides WHERE is_active = true');
     const realTier = await pool.query('SELECT * FROM tiers WHERE is_active = true LIMIT 1');
@@ -744,7 +993,7 @@ router.get('/overrides', adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
-router.post('/overrides/set', adminAuth, async (req, res) => {
+router.post('/overrides/set', adminAuth, requireRole('super_admin'), async (req, res) => {
   try {
     const { key, value, reason } = req.body;
     if (!reason || reason.trim() === '') {
@@ -768,7 +1017,7 @@ router.post('/overrides/set', adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
-router.post('/overrides/clear/:key', adminAuth, async (req, res) => {
+router.post('/overrides/clear/:key', adminAuth, requireRole('super_admin'), async (req, res) => {
   try {
     const { reason } = req.body;
     if (!reason || reason.trim() === '') {
@@ -786,7 +1035,7 @@ router.post('/overrides/clear/:key', adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
-router.get('/overrides/history', adminAuth, async (req, res) => {
+router.get('/overrides/history', adminAuth, requireRole('super_admin'), async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM admin_overrides ORDER BY created_at DESC LIMIT 500');
     res.json(result.rows);

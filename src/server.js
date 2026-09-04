@@ -42,6 +42,8 @@ const publicRoutes = require('./routes/public');
 const subscribeRoutes = require('./routes/subscribe');
 const { cmsRoutes, cmsAdminRoutes } = require('./routes/cms');
 const { adminAuth } = require('./middleware/admin-auth');
+const { requireRole } = require('./middleware/require-role');
+const { sendDailyAdminDigest } = require('./services/email-service');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -91,7 +93,7 @@ app.use('/api/cms', cmsRoutes);
 app.use('/api', subscribeRoutes);
 app.use('/webhooks', webhookRoutes);
 app.use('/admin', adminRoutes);
-app.use('/admin/cms', adminAuth, cmsAdminRoutes);
+app.use('/admin/cms', adminAuth, requireRole('editor'), cmsAdminRoutes);
 
 app.get('/health', (req, res) => res.json({ ok: true, env: process.env.NODE_ENV }));
 
@@ -157,6 +159,9 @@ cron.schedule('5 20 28-31 * *', () => {
   const tomorrow = dayjs().add(1, 'day');
   if (tomorrow.date() === 1) monthlyStatsGuarded();
 });
+
+// Daily admin digest email: 08:00 GMT+4 = 04:00 UTC
+cron.schedule('0 4 * * *', guardOverlap('dailyAdminDigest', sendDailyAdminDigest));
 
 // Reset webhook counter: midnight UTC
 cron.schedule('0 0 * * *', () => resetDailyCounter());

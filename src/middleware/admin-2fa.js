@@ -27,11 +27,19 @@ async function generate2FASetup() {
   return { secret, qrDataUrl, manual_entry_key: secret };
 }
 
-// VERIFY: Check 2FA code on every admin login
-function verify2FA(token) {
-  const secret = process.env.ADMIN_2FA_SECRET;
+// VERIFY: Check 2FA code — `secret` is the per-admin_users-row secret for a
+// real user login; falls back to the legacy env var for the bootstrap
+// login path (no admin_users row to read a secret from).
+function verify2FA(token, secret = process.env.ADMIN_2FA_SECRET) {
   if (!secret) return true; // If 2FA not configured, skip (dev mode)
   return authenticator.verify({ token, secret });
 }
 
-module.exports = { generate2FASetup, verify2FA };
+// Generates a fresh TOTP secret for a new admin user or a 2FA reset —
+// same otplib call the original single-admin ADMIN_2FA_SECRET setup
+// instructions used, just invoked at runtime instead of once by hand.
+function generateTotpSecret() {
+  return authenticator.generateSecret();
+}
+
+module.exports = { generate2FASetup, verify2FA, generateTotpSecret };

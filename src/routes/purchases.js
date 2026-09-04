@@ -24,11 +24,16 @@ const { getBtcAddressForBuyer } = require('../services/btc-address-service');
 const { logAudit } = require('../services/audit-service');
 
 const TZ = process.env.TIMEZONE || 'Asia/Dubai';
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // POST /api/purchases/intent — generate payment instruction
 router.post('/intent', walletRateLimit(10, 60000), validatePurchaseIntent, async (req, res) => {
   try {
-    const { buyer_wallet, chain, crypto, usd_amount } = req.body;
+    const { buyer_wallet, chain, crypto, usd_amount, email } = req.body;
+
+    if (email !== undefined && email !== null && email !== '' && !EMAIL_RE.test(String(email).trim())) {
+      return res.status(400).json({ success: false, error: 'Invalid email address', code: 'INVALID_EMAIL' });
+    }
 
     // ── Presale complete check ──
     const tierResult = await pool.query('SELECT * FROM tiers WHERE is_active = true LIMIT 1');
@@ -114,6 +119,18 @@ router.post('/intent', walletRateLimit(10, 60000), validatePurchaseIntent, async
     await logAudit('purchase_intent', insertResult.rows[0].id, buyer_wallet, null,
       null, { usd_amount, crypto, chain, price_locked: locked.price },
       'Purchase intent created — price locked for 15 minutes', 'system', clientIP);
+
+    if (email && EMAIL_RE.test(String(email).trim())) {
+      try {
+        await pool.query(
+          `INSERT INTO email_subscribers (email, wallet_address) VALUES ($1, $2)
+           ON CONFLICT (email) DO UPDATE SET is_active = true, wallet_address = COALESCE(email_subscribers.wallet_address, $2)`,
+          [String(email).trim().toLowerCase(), buyer_wallet]
+        );
+      } catch (subErr) {
+        console.error('[PURCHASES] Failed to upsert email_subscribers:', subErr.message);
+      }
+    }
 
     res.json({
       success: true,
