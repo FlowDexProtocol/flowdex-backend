@@ -295,7 +295,7 @@ router.get('/users', adminAuth, requireRole('super_admin'), async (req, res) => 
     const result = await pool.query(
       'SELECT id, username, role, display_name, email, is_active, last_login, created_at FROM admin_users ORDER BY created_at ASC'
     );
-    res.json({ success: true, users: result.rows });
+    res.json(result.rows);
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
