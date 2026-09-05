@@ -14,7 +14,8 @@ const cron = require('node-cron');
 const { errorHandler } = require('./middleware/error-handler');
 
 // ── Services (cron targets) ──
-const { refreshPriceCache } = require('./services/price-service');
+// Note: price-service is not on this list — prices are fetched on-demand by
+// GET /api/price/:crypto and purchase intents, not on a background cron.
 const { processOtcDrip } = require('./services/otc-service');
 const { checkWebhookHealthAndAlert, resetDailyCounter } = require('./services/webhook-health');
 
@@ -122,12 +123,6 @@ function guardOverlap(key, fn) {
   };
 }
 
-// Price cache: every 5 minutes. CMC free tier allows ~330 calls/day; at this
-// interval with 5 coins that's well within limits (refreshPriceCache() has
-// its own 429 backoff on top, so a rate-limit response can't turn this into
-// a tighter retry loop).
-cron.schedule('*/5 * * * *', () => refreshPriceCache());
-
 // OTC drip: every 5 minutes
 cron.schedule('*/5 * * * *', () => processOtcDrip());
 
@@ -175,7 +170,6 @@ cron.schedule('0 3 * * *', () => checkDiskUsage());
 app.listen(PORT, () => {
   console.log('═══ FlowDex Protocol Backend V2 ═══');
   console.log('Listening on port ' + PORT + ' (' + (process.env.NODE_ENV || 'development') + ')');
-  refreshPriceCache(); // warm the price cache on boot
 });
 
 module.exports = app;

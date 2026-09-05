@@ -47,12 +47,16 @@ router.post('/intent', walletRateLimit(10, 60000), validatePurchaseIntent, async
     const tier = tierResult.rows[0];
 
     // ── Price freshness check ──
+    // getPrice() only returns null when nothing is cached at all AND both
+    // CoinMarketCap and the CoinGecko fallback failed — a stale-but-cached
+    // price is still returned (see the stale-price note below) rather than
+    // refused.
     const currentPrice = await getPrice(crypto);
     if (!currentPrice) {
       return res.status(503).json({
         success: false,
-        error: 'Prices temporarily unavailable. Please try again in a minute.',
-        code: 'PRICE_STALE',
+        error: 'Price unavailable',
+        code: 'PRICE_UNAVAILABLE',
       });
     }
 
@@ -63,7 +67,7 @@ router.post('/intent', walletRateLimit(10, 60000), validatePurchaseIntent, async
     } catch (err) {
       return res.status(503).json({
         success: false,
-        error: 'Price feed temporarily unavailable. Try again in a minute.',
+        error: 'Price unavailable',
         code: 'PRICE_UNAVAILABLE',
       });
     }
@@ -141,6 +145,11 @@ router.post('/intent', walletRateLimit(10, 60000), validatePurchaseIntent, async
       expires_in: '15 minutes',
       tokens_estimated: tokensEstimated,
       tier: { id: tier.id, name: tier.name, price: parseFloat(tier.price) },
+      // The price was stale (upstream fetch failed/skipped) but we allow the
+      // purchase anyway — this 15-minute lock is normally what's used for
+      // final allocation, but payment-service.js falls back to a fresh
+      // confirmation-time price if the lock expires before the payment lands.
+      ...(locked.stale ? { note: 'Price may be slightly delayed. Final token allocation will use the price at confirmation time.' } : {}),
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
