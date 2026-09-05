@@ -6,6 +6,10 @@
 const jwt = require('jsonwebtoken');
 const pool = require('../db/pool');
 
+const SESSION_TTL_MINUTES = 20;
+const SESSION_TTL_MS = SESSION_TTL_MINUTES * 60 * 1000;
+const SESSION_TTL_SECONDS = SESSION_TTL_MINUTES * 60;
+
 // Active sessions stored in memory (or Redis for production)
 const activeSessions = new Map();
 
@@ -14,13 +18,13 @@ async function createBuyerSession(walletAddress) {
   const token = jwt.sign(
     { wallet: walletAddress.toLowerCase(), type: 'buyer' },
     process.env.JWT_SECRET,
-    { expiresIn: '30m' }
+    { expiresIn: SESSION_TTL_MINUTES + 'm' }
   );
 
   activeSessions.set(walletAddress.toLowerCase(), {
     token,
     connectedAt: new Date(),
-    expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+    expiresAt: new Date(Date.now() + SESSION_TTL_MS),
     lastActivity: new Date(),
   });
 
@@ -37,7 +41,7 @@ function refreshSession(walletAddress) {
   const session = activeSessions.get(walletAddress.toLowerCase());
   if (session) {
     session.lastActivity = new Date();
-    session.expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+    session.expiresAt = new Date(Date.now() + SESSION_TTL_MS);
   }
 }
 
@@ -60,9 +64,9 @@ function buyerAuth(req, res, next) {
     const session = activeSessions.get(decoded.wallet);
     if (!session) return res.status(401).json({ success: false, error: 'Session expired. Reconnect wallet.', code: 'SESSION_EXPIRED' });
 
-    // Check 30-minute inactivity
+    // Check inactivity timeout
     const inactiveMs = Date.now() - session.lastActivity.getTime();
-    if (inactiveMs > 30 * 60 * 1000) {
+    if (inactiveMs > SESSION_TTL_MS) {
       activeSessions.delete(decoded.wallet);
       return res.status(401).json({ success: false, error: 'Session timed out. Reconnect wallet.', code: 'SESSION_TIMEOUT' });
     }
@@ -80,10 +84,10 @@ function buyerAuth(req, res, next) {
 setInterval(() => {
   const now = Date.now();
   for (const [wallet, session] of activeSessions.entries()) {
-    if (now - session.lastActivity.getTime() > 30 * 60 * 1000) {
+    if (now - session.lastActivity.getTime() > SESSION_TTL_MS) {
       activeSessions.delete(wallet);
     }
   }
 }, 5 * 60 * 1000);
 
-module.exports = { createBuyerSession, destroyBuyerSession, buyerAuth };
+module.exports = { createBuyerSession, destroyBuyerSession, buyerAuth, SESSION_TTL_SECONDS };

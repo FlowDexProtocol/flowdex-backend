@@ -88,6 +88,67 @@ const faqs = [
   },
 ];
 
+const blogPosts = [
+  {
+    title: 'Introducing FlowDex Protocol',
+    slug: 'introducing-flowdex-protocol',
+    excerpt: 'FlowDex Protocol unifies crypto, stocks, forex, and commodities into a single intelligent trading layer.',
+    content: `FlowDex Protocol is building a new kind of DeFi platform — one that combines a Universal Exchange with a Blockchain Intelligence Terminal, all powered by the $FDP token.
+
+The Universal Exchange lets you trade crypto, stocks, forex, and commodities from a single interface. Our cross-chain routing engine scans every DEX and liquidity pool to find the best price, so you never miss an opportunity.
+
+The Intelligence Terminal provides AI-powered market analytics. Real-time whale tracking, pattern detection, predictive signals, and smart alerts — all derived from live on-chain data.
+
+$FDP is the token that powers everything. Holders earn 40% of all protocol trading fees through staking, vote on governance decisions, get priority order routing, and access premium intelligence features.
+
+The presale is live now with 8 tiers. Tier 1 (Genesis) offers $FDP at $0.001 — a 98% discount from the $0.05 listing price. Earlier tiers get the best price but have longer vesting periods.
+
+Visit purchase.flowdexprotocol.com to participate.`,
+    category: 'announcements',
+    author: 'FlowDex Team',
+  },
+  {
+    title: 'How to Buy $FDP — Step by Step',
+    slug: 'how-to-buy-fdp-guide',
+    excerpt: 'A complete guide to buying $FDP tokens in the FlowDex presale. No experience needed.',
+    content: `Buying $FDP is straightforward. Here is everything you need to know.
+
+Step 1: Get a Wallet. Download MetaMask (metamask.io) or Trust Wallet from your app store. Create a new wallet and save your recovery phrase somewhere safe.
+
+Step 2: Add Funds. Buy ETH, USDT, or BNB from any exchange (Coinbase, Binance, etc.) and send it to your wallet address.
+
+Step 3: Visit the Buy Page. Go to purchase.flowdexprotocol.com and click Connect Wallet. Select your wallet and approve the connection.
+
+Step 4: Choose Payment. Select which crypto you want to pay with — ETH, USDT, USDC, BNB, SOL, or BTC. Enter the USD amount you want to spend.
+
+Step 5: Confirm and Send. Click Buy $FDP. You will receive a deposit address with a QR code and a 15-minute price lock. Send the exact amount shown to the address provided.
+
+Step 6: Check Your Portfolio. Once your payment is confirmed on the blockchain, your $FDP tokens are allocated automatically. Check the Portfolio tab to see your holdings and vesting schedule.
+
+Need help? Contact support@flowdexprotocol.com`,
+    category: 'updates',
+    author: 'FlowDex Team',
+  },
+  {
+    title: 'Understanding $FDP Tokenomics',
+    slug: 'understanding-fdp-tokenomics',
+    excerpt: 'A deep dive into the $FDP token distribution, vesting schedule, and deflationary burn mechanism.',
+    content: `$FDP has a fixed total supply of 10 billion tokens. No inflation, no additional minting.
+
+The supply is allocated across seven categories: Presale (22.5%), Liquidity (20%), Team and Advisors (15%, with 2-year vest and 6-month cliff), Ecosystem Fund (15%), Marketing (10%), Staking Rewards (10%), and Reserve (7.5%).
+
+Each presale tier has its own vesting terms. Tier 1 (Genesis) at $0.001 gets 5% at TGE with a 12-month cliff and 24-month vest. Tier 8 (Launch) at $0.05 gets 100% at TGE with no cliff or vest. Earlier tiers get better prices but longer lockups. Later tiers cost more but tokens unlock faster.
+
+The referral program adds a deflationary mechanism. Every referral purchase burns bonus tokens permanently from the supply. When someone buys using a referral code, both the referrer and the buyer receive bonus tokens — and an equal amount of $FDP is burned at full tier price. More referrals mean more burns and a shrinking supply.
+
+Terminal Credits, earned through referrals, are redeemable when the Blockchain Intelligence Terminal launches. Credits are split 70/30 — 70% Terminal Credits and 30% $FDP tokens.
+
+View the full breakdown at flowdexprotocol.com/tokenomics`,
+    category: 'research',
+    author: 'FlowDex Team',
+  },
+];
+
 // page → section → field → value
 const pageContent = {
   landing: {
@@ -344,17 +405,97 @@ const pageContent = {
   // ── Legal pages ──
   terms: {
     content: {
-      body: '[Full terms of service text — placeholder for admin to fill in]',
+      body: `TERMS OF SERVICE — Last Updated: September 2026
+
+1. ACCEPTANCE OF TERMS
+By accessing or using the FlowDex Protocol platform, purchasing $FDP tokens, or interacting with any FlowDex smart contracts, you agree to be bound by these Terms of Service.
+
+2. TOKEN PURCHASE
+$FDP is a utility token. Purchasing $FDP does not constitute an investment in a security. $FDP tokens provide access to platform features including fee sharing, governance, routing priority, validator staking, and intelligence terminal access.
+
+3. ELIGIBILITY
+You must be at least 18 years old and legally able to enter into contracts in your jurisdiction. You are responsible for ensuring compliance with your local laws. FlowDex does not perform KYC verification.
+
+4. PRESALE TERMS
+Token prices are set per tier and locked for 15 minutes upon creating a purchase intent. Tokens are allocated at the locked price regardless of market fluctuations. Vesting schedules vary by tier.
+
+5. RISKS
+Cryptocurrency purchases carry significant risk including total loss of funds. Token prices can fluctuate. Past performance does not indicate future results. You should only purchase what you can afford to lose.
+
+6. REFUND POLICY
+All purchases are final. Blockchain transactions cannot be reversed. No refunds will be issued.
+
+7. INTELLECTUAL PROPERTY
+All content, branding, and technology are the property of FlowDex Protocol.
+
+8. LIMITATION OF LIABILITY
+FlowDex Protocol shall not be liable for any losses arising from market volatility, smart contract vulnerabilities, regulatory changes, or third-party services.
+
+9. MODIFICATIONS
+We may update these terms at any time. Continued use constitutes acceptance of updated terms.
+
+10. GOVERNING LAW
+These terms are governed by applicable laws of the jurisdiction in which FlowDex Protocol is registered.`,
     },
   },
   privacy: {
     content: {
-      body: '[Full privacy policy text — placeholder for admin to fill in]',
+      body: `PRIVACY POLICY — Last Updated: September 2026
+
+1. INFORMATION WE COLLECT
+We collect wallet addresses used to connect to our platform, transaction data related to purchases, optional email addresses provided during purchase, and basic analytics data through Google Analytics.
+
+2. HOW WE USE INFORMATION
+Wallet addresses are used to process purchases, allocate tokens, and manage referral programs. Email addresses are used to send purchase confirmations and optional updates. Analytics data helps us improve the platform.
+
+3. BLOCKCHAIN DATA
+Wallet addresses and transaction data are recorded on public blockchains. This data is inherently public and cannot be deleted.
+
+4. COOKIES
+We use essential cookies for site functionality and analytics cookies (Google Analytics) to understand site usage. You can manage cookie preferences through your browser settings.
+
+5. DATA SHARING
+We do not sell personal data. We may share data with service providers (Alchemy, Resend) who help operate the platform. We may disclose data if required by law.
+
+6. DATA RETENTION
+Transaction records are retained indefinitely as they are part of the blockchain. Email addresses are retained until you unsubscribe. Analytics data is retained per Google Analytics policies.
+
+7. YOUR RIGHTS
+You may request access to your data, unsubscribe from emails, or contact us with privacy concerns at support@flowdexprotocol.com.
+
+8. SECURITY
+We implement industry-standard security measures including HTTPS encryption, webhook signature verification, and rate limiting.
+
+9. CHANGES
+We may update this policy at any time. Changes will be posted on this page.`,
     },
   },
   legal: {
     content: {
-      body: '[Full legal notice text — placeholder for admin to fill in]',
+      body: `LEGAL NOTICE AND DISCLAIMER — Last Updated: September 2026
+
+IMPORTANT: Please read this notice carefully before using the FlowDex Protocol platform or purchasing $FDP tokens.
+
+NOT FINANCIAL ADVICE
+Nothing on this website constitutes financial, investment, legal, or tax advice. $FDP is a utility token designed to provide access to FlowDex Protocol services. You should consult with qualified professionals before making any financial decisions.
+
+NO GUARANTEE OF VALUE
+$FDP tokens have no guaranteed value. Market cap scenarios shown on this website are illustrative only and do not constitute promises or predictions. The value of $FDP may decrease, and you may lose your entire purchase amount.
+
+REGULATORY STATUS
+$FDP is a utility token and is not intended to be a security in any jurisdiction. FlowDex Protocol does not offer securities. The regulatory status of cryptocurrency tokens varies by jurisdiction and is subject to change.
+
+FORWARD-LOOKING STATEMENTS
+This website contains forward-looking statements about FlowDex Protocol development, features, and roadmap. These statements are based on current plans and expectations and may change. There is no guarantee that any planned feature will be developed or launched.
+
+THIRD-PARTY SERVICES
+FlowDex Protocol integrates with third-party services including blockchain networks, wallet providers, and payment processors. We are not responsible for the availability or security of third-party services.
+
+JURISDICTION
+Access to FlowDex Protocol may be restricted in certain jurisdictions. You are responsible for ensuring compliance with your local laws and regulations.
+
+CONTACT
+For legal inquiries, contact support@flowdexprotocol.com`,
     },
   },
 
@@ -415,6 +556,21 @@ async function seedFaqs() {
   console.log(`Seeded ${faqs.length} FAQs`);
 }
 
+async function seedBlogPosts() {
+  let inserted = 0;
+  for (const p of blogPosts) {
+    const result = await pool.query(
+      `INSERT INTO cms_blog_posts (title, slug, excerpt, content, category, author, is_published, published_at)
+       VALUES ($1,$2,$3,$4,$5,$6,true,NOW())
+       ON CONFLICT (slug) DO NOTHING
+       RETURNING id`,
+      [p.title, p.slug, p.excerpt, p.content, p.category, p.author]
+    );
+    if (result.rows.length > 0) inserted++;
+  }
+  console.log(`Seeded ${inserted} blog post(s) (${blogPosts.length - inserted} already existed and were left untouched)`);
+}
+
 async function seedPageContent() {
   // DO NOTHING (not DO UPDATE) — this script is re-run on every deploy, and
   // an admin may have already edited a field via the CMS dashboard by then.
@@ -444,6 +600,7 @@ async function seed() {
   try {
     await seedBanners();
     await seedFaqs();
+    await seedBlogPosts();
     await seedPageContent();
     console.log('CMS seed complete');
   } catch (err) {

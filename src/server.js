@@ -12,6 +12,7 @@ const rateLimit = require('express-rate-limit');
 const cron = require('node-cron');
 
 const { errorHandler } = require('./middleware/error-handler');
+const pool = require('./db/pool');
 
 // ── Services (cron targets) ──
 // Note: price-service is not on this list — prices are fetched on-demand by
@@ -23,6 +24,7 @@ const { checkWebhookHealthAndAlert, resetDailyCounter } = require('./services/we
 const { cleanupExpiredIntents } = require('./jobs/cleanup-intents');
 const { checkBtcPayments } = require('./jobs/btc-monitor');
 const { checkTronPayments } = require('./jobs/tron-monitor');
+const { checkBscPayments } = require('./jobs/bsc-monitor');
 const { runReconciliation } = require('./jobs/reconciliation');
 const { takeBalanceSnapshot } = require('./jobs/balance-snapshot');
 const { aggregateDailyStats, aggregateWeeklyStats, aggregateMonthlyStats } = require('./jobs/stats-aggregator');
@@ -86,6 +88,10 @@ app.use('/api/buyer', buyerRoutes);
 app.use('/api/tiers', tierRoutes);
 app.use('/api/price', priceRoutes);
 app.use('/api/purchases', purchaseRoutes);
+// Also mounted singular: GET /api/purchase/watch/:intent_id is the polling
+// endpoint the buy page calls (same router — /api/purchases keeps working
+// for everything else, e.g. POST /api/purchases/intent).
+app.use('/api/purchase', purchaseRoutes);
 app.use('/api/referral', referralRoutes);
 app.use('/api/claims', claimRoutes);
 app.use('/api/stats', statsRoutes);
@@ -96,7 +102,38 @@ app.use('/webhooks', webhookRoutes);
 app.use('/admin', adminRoutes);
 app.use('/admin/cms', adminAuth, requireRole('editor'), cmsAdminRoutes);
 
-app.get('/health', (req, res) => res.json({ ok: true, env: process.env.NODE_ENV }));
+// GET /health — liveness/readiness check for uptime monitors and load balancers.
+// price_cache freshness mirrors price-service.js's own 30-minute cache
+// window: "fresh" means at least one price was fetched within that window,
+// "stale" doesn't fail the check (prices are fetched on-demand, so an idle
+// cache is normal) — only a database failure returns 503.
+app.get('/health', async (req, res) => {
+  let database = 'connected';
+  try {
+    await pool.query('SELECT 1');
+  } catch (err) {
+    database = 'error';
+  }
+
+  let priceCache = 'stale';
+  try {
+    const result = await pool.query('SELECT MAX(updated_at) as latest FROM price_cache');
+    const latest = result.rows[0]?.latest;
+    if (latest && Date.now() - new Date(latest).getTime() < 30 * 60 * 1000) {
+      priceCache = 'fresh';
+    }
+  } catch (err) {
+    priceCache = 'stale';
+  }
+
+  res.status(database === 'connected' ? 200 : 503).json({
+    status: database === 'connected' ? 'ok' : 'error',
+    uptime: process.uptime(),
+    database,
+    price_cache: priceCache,
+    timestamp: new Date().toISOString(),
+  });
+});
 
 // ══ ERROR HANDLER (must be last) ══
 app.use(errorHandler);
@@ -134,6 +171,10 @@ cron.schedule('*/60 * * * * *', guardOverlap('btcMonitor', checkBtcPayments));
 
 // TRON monitor: every 30 seconds
 cron.schedule('*/30 * * * * *', guardOverlap('tronMonitor', checkTronPayments));
+
+// BSC monitor: every 30 seconds — fallback alongside the Alchemy webhook
+// (see routes/webhooks.js), same pattern as the TRON/BTC monitors above
+cron.schedule('*/30 * * * * *', guardOverlap('bscMonitor', checkBscPayments));
 
 // Reconciliation: every 6 hours
 cron.schedule('5 */6 * * *', guardOverlap('reconciliation', runReconciliation));

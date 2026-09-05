@@ -74,6 +74,12 @@ async function alertTierAdvanced(fromTier, toTier) {
     'TGE claims for Tier ' + fromTier + ' have been generated.', 'info');
 }
 
+async function alertLatePayment(usdValue, wallet, intentId) {
+  await sendAlert('Late Payment Matched',
+    'Late payment received: $' + Number(usdValue).toLocaleString() + ' from ' +
+    wallet.substring(0,8) + '...' + wallet.slice(-4) + ' for expired intent #' + intentId, 'warning');
+}
+
 async function alertUnknownToken(currency, tokenName, amount, contractAddress, chain, senderWallet) {
   await sendAlert('Unknown Token Received',
     'Token: ' + currency + ' (' + (tokenName || 'unknown') + ')\n' +
@@ -87,5 +93,6 @@ async function alertUnknownToken(currency, tokenName, amount, contractAddress, c
 
 module.exports = {
   sendAlert, alertReconciliationMismatch, alertTierNearlyFull,
-  alertWebhookDown, alertSupplyLow, alertLargePurchase, alertTierAdvanced, alertUnknownToken
+  alertWebhookDown, alertSupplyLow, alertLargePurchase, alertTierAdvanced, alertUnknownToken,
+  alertLatePayment,
 };

@@ -7,7 +7,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db/pool');
-const { createBuyerSession, destroyBuyerSession, buyerAuth } = require('../middleware/buyer-auth');
+const { createBuyerSession, destroyBuyerSession, buyerAuth, SESSION_TTL_SECONDS } = require('../middleware/buyer-auth');
 const { isValidEvmAddress, isValidSolanaAddress } = require('../middleware/validation');
 const { lookupIP, getClientIP } = require('../services/geo-service');
 const { logAudit } = require('../services/audit-service');
@@ -145,7 +145,7 @@ router.post('/connect', async (req, res) => {
     res.json({
       success: true,
       token,
-      expires_in: '30 minutes',
+      expires_in: SESSION_TTL_SECONDS,
       wallet: address,
       referral_code: referralCode,
       is_new_buyer: isNewBuyer,
@@ -180,9 +180,9 @@ router.get('/session', buyerAuth, (req, res) => {
 });
 
 // ═══ POST /api/wallet/refresh ═══
-// Frontend calls this to extend the 30-minute timer
+// Frontend calls this to extend the session timer
 router.post('/refresh', buyerAuth, (req, res) => {
-  res.json({ success: true, wallet: req.buyerWallet, expires_in: '30 minutes' });
+  res.json({ success: true, wallet: req.buyerWallet, expires_in: SESSION_TTL_SECONDS });
 });
 
 module.exports = router;

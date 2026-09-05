@@ -514,6 +514,44 @@ router.get('/dashboard', adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
+// GET /admin/stats/daily — last 30 days, for the admin dashboard charts.
+// new_buyers counts wallets whose globally-first confirmed purchase landed
+// on that day (not just "made a purchase that day").
+router.get('/stats/daily', adminAuth, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      WITH first_purchase AS (
+        SELECT buyer_wallet, MIN(day_gmt4) as first_day
+        FROM purchases WHERE status = 'confirmed'
+        GROUP BY buyer_wallet
+      )
+      SELECT
+        p.day_gmt4 as date,
+        COUNT(*) as purchase_count,
+        COALESCE(SUM(p.usd_value), 0) as usd_raised,
+        COUNT(DISTINCT fp.buyer_wallet) FILTER (WHERE fp.first_day = p.day_gmt4) as new_buyers
+      FROM purchases p
+      JOIN first_purchase fp ON fp.buyer_wallet = p.buyer_wallet
+      WHERE p.status = 'confirmed' AND p.day_gmt4 >= (CURRENT_DATE - INTERVAL '30 days')
+      GROUP BY p.day_gmt4
+      ORDER BY p.day_gmt4 ASC
+    `);
+    res.json(result.rows);
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// GET /admin/stats/by-chain — for the admin dashboard charts
+router.get('/stats/by-chain', adminAuth, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT chain, COUNT(*) as count, COALESCE(SUM(usd_value), 0) as usd_total
+      FROM purchases WHERE status = 'confirmed'
+      GROUP BY chain ORDER BY usd_total DESC
+    `);
+    res.json(result.rows);
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
 // GET /admin/supply — full token supply accounting
 router.get('/supply', adminAuth, async (req, res) => {
   try {

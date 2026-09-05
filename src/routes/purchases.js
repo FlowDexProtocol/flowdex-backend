@@ -175,6 +175,45 @@ router.get('/recent', async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
+// GET /api/purchase/watch/:intent_id — public, no auth. Polled by the buy
+// page every 5 seconds after payment instructions appear, so a buyer sees
+// their payment move from "pending" to "confirmed" without refreshing.
+router.get('/watch/:intent_id', ipRateLimit(20, 60000), async (req, res) => {
+  try {
+    const intentId = parseInt(req.params.intent_id, 10);
+    if (!Number.isInteger(intentId)) {
+      return res.status(400).json({ success: false, error: 'Invalid intent_id' });
+    }
+
+    const result = await pool.query(
+      `SELECT status, usd_value, tokens_allocated, tier_name, created_at FROM purchases WHERE id = $1`,
+      [intentId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Purchase intent not found' });
+    }
+
+    const p = result.rows[0];
+    // purchases.status doesn't have a distinct "payment seen on-chain but
+    // not yet fully confirmed" value — flagged/needs_pricing rows mean
+    // exactly that (a payment landed and was processed, but needs admin
+    // review before allocation), so they map to "detected" here.
+    let status;
+    if (p.status === 'confirmed') status = 'confirmed';
+    else if (p.status === 'expired') status = 'expired';
+    else if (p.status === 'flagged' || p.status === 'needs_pricing') status = 'detected';
+    else status = 'pending';
+
+    res.json({
+      status,
+      usd_value: p.usd_value !== null ? parseFloat(p.usd_value) : null,
+      tokens_allocated: p.tokens_allocated !== null ? parseFloat(p.tokens_allocated) : null,
+      tier_name: p.tier_name,
+      created_at: p.created_at,
+    });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
 // GET /api/purchases/status/:tx_hash — public lookup, no wallet connection
 // needed. tx_hash is stored verbatim (not lowercased) at webhook-ingest time
 // (see webhooks.js), so this is an exact-match lookup.

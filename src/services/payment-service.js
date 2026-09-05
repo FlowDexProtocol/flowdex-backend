@@ -26,7 +26,7 @@ const { canAllocate } = require('./supply-service');
 const { processReferralBonus } = require('./referral-service');
 const { generateClaimsForTier } = require('./claims-service');
 const { logAudit } = require('./audit-service');
-const { alertLargePurchase, alertTierNearlyFull, alertTierAdvanced, alertUnknownToken, alertSupplyLow } = require('./alert-service');
+const { alertLargePurchase, alertTierNearlyFull, alertTierAdvanced, alertUnknownToken, alertSupplyLow, alertLatePayment } = require('./alert-service');
 const { sendPurchaseConfirmation, sendReferralNotification, sendLargePurchaseAlert } = require('./email-service');
 
 const TZ = process.env.TIMEZONE || 'Asia/Dubai';
@@ -162,9 +162,18 @@ async function processPayment({ senderWallet, amount, currency, chain, txHash, t
     const usdValue = amount * usdPrice;
 
     // ── STEP 4: MATCH AGAINST OPEN PURCHASE INTENT (price lock + over/underpayment) ──
+    // Also matches an intent that cleanup-intents.js has already flipped to
+    // 'expired' (its 15-minute price lock passed before payment arrived) —
+    // a buyer who's a few minutes late must never be repriced at the
+    // confirmation-time market price. Bounded to intents from the last 24
+    // hours so a stray payment can't attach itself to a long-abandoned one.
+    // (There's no per-buyer receiving address to match against for EVM
+    // chains — every buyer shares the same env-configured address — so
+    // buyer_wallet, the actual payment sender, is the correct match key.)
     const intentResult = await client.query(
       `SELECT * FROM purchases WHERE buyer_wallet = $1 AND chain = $2 AND crypto_currency = $3
-         AND status = 'intent' ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
+         AND status IN ('intent', 'expired') AND created_at > NOW() - INTERVAL '24 hours'
+         ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
       [buyerWallet, chain, currency]
     );
     const intent = intentResult.rows[0] || null;
@@ -173,19 +182,21 @@ async function processPayment({ senderWallet, amount, currency, chain, txHash, t
     let finalUsdValue = usdValue;
     let finalPrice = usdPrice;
     let finalPriceSource = priceSource;
+    let isLatePayment = false;
 
     if (intent) {
       const lockActive = intent.price_lock_status === 'active'
         && new Date(intent.price_lock_expires_at).getTime() > Date.now();
 
-      if (lockActive) {
-        finalPrice = parseFloat(intent.price_at_purchase);
-        finalUsdValue = amount * finalPrice;
-        finalPriceSource = intent.price_source;
-      } else {
-        await logAudit('price_lock_expired', intent.id, buyerWallet, txHash,
-          { locked_price: intent.price_at_purchase }, { used_price: usdPrice },
-          'Price lock expired, used confirmation-time price', 'system');
+      // Whether the lock is still active or already expired, an intent
+      // match always honors its ORIGINAL locked price — never the
+      // (possibly worse) price at confirmation time.
+      finalPrice = parseFloat(intent.price_at_purchase);
+      finalUsdValue = amount * finalPrice;
+      finalPriceSource = intent.price_source;
+
+      if (!lockActive) {
+        isLatePayment = true;
       }
 
       const expectedCrypto = parseFloat(intent.crypto_amount);
@@ -193,6 +204,7 @@ async function processPayment({ senderWallet, amount, currency, chain, txHash, t
         if (amount > expectedCrypto * 1.0001) matchStatus = 'overpayment';
         else if (amount < expectedCrypto * 0.9999) matchStatus = 'underpayment';
       }
+      if (isLatePayment) matchStatus = 'late_payment';
     }
 
     const tokensAllocated = finalUsdValue / parseFloat(tier.price);
@@ -296,9 +308,20 @@ async function processPayment({ senderWallet, amount, currency, chain, txHash, t
       null, { usd_value: finalUsdValue, tokens: tokensAllocated, tier: tier.id, match_status: matchStatus },
       'Payment confirmed and allocated', 'system');
 
+    if (isLatePayment) {
+      await logAudit('late_payment_matched', purchaseId, buyerWallet, txHash,
+        { intent_id: intent.id, price_lock_expires_at: intent.price_lock_expires_at },
+        { locked_price: finalPrice, usd_value: finalUsdValue },
+        'Late payment received for expired intent #' + intent.id, 'system');
+    }
+
     await client.query('COMMIT');
 
     // ── Post-commit alerts (tier progress, tier advance, large purchase) ──
+    if (isLatePayment) {
+      await alertLatePayment(finalUsdValue, buyerWallet, intent.id);
+    }
+
     if (finalUsdValue > 10000) {
       await alertLargePurchase(buyerWallet, finalUsdValue, tokensAllocated);
     }

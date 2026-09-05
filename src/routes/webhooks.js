@@ -20,6 +20,26 @@ const EVM_ADDRESS = (process.env.EVM_RECEIVING_ADDRESS || '').toLowerCase();
 // 🔴 SOLANA_RECEIVING_ADDRESS from .env
 const SOLANA_ADDRESS = process.env.SOLANA_RECEIVING_ADDRESS || '';
 
+// Alchemy's `activity.network` is one of its own enum values (e.g.
+// "ETH_MAINNET", "BNB_MAINNET"), not the app's internal chain slug used
+// everywhere else (purchases.chain, token-registry.js, NETWORK_NAMES,
+// price-service.js, etc). Without this normalization, BSC activity would
+// fall through as an unrecognized chain string — lookupToken()/getNativeToken()
+// would silently misidentify BNB and BEP-20 transfers as Ethereum ones.
+const ALCHEMY_NETWORK_TO_CHAIN = {
+  ETH_MAINNET: 'ethereum',
+  BNB_MAINNET: 'bsc',
+  MATIC_MAINNET: 'polygon',
+  ARB_MAINNET: 'arbitrum',
+  OPT_MAINNET: 'optimism',
+  BASE_MAINNET: 'base',
+};
+
+function normalizeChain(network) {
+  if (!network) return 'ethereum';
+  return ALCHEMY_NETWORK_TO_CHAIN[network.toUpperCase()] || network.toLowerCase();
+}
+
 router.post('/alchemy', async (req, res) => {
   try {
     // Validate webhook signature — MANDATORY. A missing signing key is a
@@ -53,7 +73,7 @@ router.post('/alchemy', async (req, res) => {
 
       const senderWallet = activity.fromAddress;
       const txHash = activity.hash;
-      const chain = activity.network || 'ethereum';
+      const chain = normalizeChain(activity.network);
 
       // ── Reverted/failed transaction check ──
       if (activity.isError === '1' || activity.isError === true) {
