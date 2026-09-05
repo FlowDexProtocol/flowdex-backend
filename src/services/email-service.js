@@ -1,14 +1,14 @@
 // ══════════════════════════════════════════════════
 // src/services/email-service.js
-// SendGrid email notifications — purchase confirmations, referral
+// Resend email notifications — purchase confirmations, referral
 // notifications, large-purchase alerts, and the daily admin digest.
 //
-// Fail-silent by design: if SENDGRID_API_KEY is unset, or a send throws,
+// Fail-silent by design: if RESEND_API_KEY is unset, or a send throws,
 // every function here swallows the error and returns. Nothing in this file
 // is allowed to interrupt the purchase-confirmation flow.
 // ══════════════════════════════════════════════════
 
-const sgMail = require('@sendgrid/mail');
+const { Resend } = require('resend');
 const pool = require('../db/pool');
 const dayjs = require('dayjs');
 const utc = require('dayjs/plugin/utc');
@@ -20,9 +20,9 @@ const TZ = process.env.TIMEZONE || 'Asia/Dubai';
 const FROM = process.env.EMAIL_FROM || 'noreply@flowdexprotocol.com';
 const FRONTEND_URL = (process.env.FRONTEND_URL || 'https://flowdexprotocol.com').split(',')[0].trim().replace(/\/$/, '');
 
-// Resolves the effective SendGrid API key: cms_settings (admin-set via
-// PUT /admin/settings/sendgrid) takes priority, falling back to the
-// SENDGRID_API_KEY env var. Re-checked on every send rather than cached at
+// Resolves the effective Resend API key: cms_settings (admin-set via
+// PUT /admin/settings/resend) takes priority, falling back to the
+// RESEND_API_KEY env var. Re-checked on every send rather than cached at
 // module load, so an admin updating the key via the dashboard takes effect
 // immediately — no redeploy needed. The cms_settings query is wrapped in
 // its own try/catch: on a database that hasn't been migrated to include
@@ -30,13 +30,18 @@ const FRONTEND_URL = (process.env.FRONTEND_URL || 'https://flowdexprotocol.com')
 // breaking every email send.
 async function getApiKey() {
   try {
-    const result = await pool.query("SELECT value FROM cms_settings WHERE key = 'sendgrid_api_key'");
+    const result = await pool.query("SELECT value FROM cms_settings WHERE key = 'resend_api_key'");
     const dbKey = result.rows[0]?.value;
     if (dbKey) return dbKey;
   } catch (err) {
     console.error('[EMAIL] cms_settings lookup failed, falling back to env var:', err.message);
   }
-  return process.env.SENDGRID_API_KEY || null;
+  return process.env.RESEND_API_KEY || null;
+}
+
+function getClient(apiKey) {
+  if (!apiKey) return null;
+  return new Resend(apiKey);
 }
 
 const EXPLORER_TX_URL = {
@@ -109,15 +114,22 @@ function statRow(label, value) {
 </tr>`;
 }
 
-async function sendEmail(to, subject, html) {
+async function sendEmail({ to, subject, html }) {
   if (!to) return;
   const apiKey = await getApiKey();
-  if (!apiKey) return;
+  const client = getClient(apiKey);
+  if (!client) return; // silently skip if no API key
   try {
-    sgMail.setApiKey(apiKey);
-    await sgMail.send({ to, from: FROM, subject, html });
+    // The Resend SDK reports API-level failures (bad key, unverified
+    // domain, etc.) as a returned `error`, not a thrown exception — check
+    // both, since a network-level failure can still throw.
+    const result = await client.emails.send({ from: FROM, to, subject, html });
+    if (result?.error) {
+      console.error('[EMAIL] Failed to send "' + subject + '" to ' + to + ':', result.error.message || result.error);
+    }
   } catch (err) {
     console.error('[EMAIL] Failed to send "' + subject + '" to ' + to + ':', err.message);
+    // Never throw — email failure must not block purchase flow
   }
 }
 
@@ -126,13 +138,14 @@ async function sendEmail(to, subject, html) {
 // the error would defeat the entire point of testing.
 async function sendTestEmail(to) {
   const apiKey = await getApiKey();
-  if (!apiKey) return { success: false, error: 'No SendGrid API key configured (set one via Admin Settings, or the SENDGRID_API_KEY env var).' };
+  const client = getClient(apiKey);
+  if (!client) return { success: false, error: 'No Resend API key configured (set one via Admin Settings, or the RESEND_API_KEY env var).' };
 
   const html = wrapEmail(
     'This is a test email from your FlowDex admin dashboard.',
     `
     <h2 style="margin:0 0 4px 0;color:#ffffff;font-size:18px;">Test Email</h2>
-    <p style="margin:0 0 20px 0;color:#8C9BB5;">This is a test email sent from the FlowDex admin dashboard to confirm your SendGrid configuration is working.</p>
+    <p style="margin:0 0 20px 0;color:#8C9BB5;">This is a test email sent from the FlowDex admin dashboard to confirm your Resend configuration is working.</p>
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
       ${statRow('Sent At', dayjs().tz(TZ).format('YYYY-MM-DD HH:mm:ss') + ' (' + TZ + ')')}
       ${statRow('Sent To', to)}
@@ -141,12 +154,13 @@ async function sendTestEmail(to) {
   );
 
   try {
-    sgMail.setApiKey(apiKey);
-    await sgMail.send({ to, from: FROM, subject: 'FlowDex Admin — Test Email', html });
+    const result = await client.emails.send({ from: FROM, to, subject: 'FlowDex Admin — Test Email', html });
+    if (result?.error) {
+      return { success: false, error: result.error.message || String(result.error) };
+    }
     return { success: true, message: 'Test email sent to ' + to + '.' };
   } catch (err) {
-    const detail = err.response?.body?.errors?.[0]?.message || err.message;
-    return { success: false, error: detail };
+    return { success: false, error: err.message };
   }
 }
 
@@ -202,7 +216,7 @@ async function sendPurchaseConfirmation(purchase, tier) {
       `
     );
 
-    await sendEmail(to, 'Purchase Confirmed — ' + fmtNum(purchase.tokens_allocated, 0) + ' $FDP Allocated', html);
+    await sendEmail({ to, subject: 'Purchase Confirmed — ' + fmtNum(purchase.tokens_allocated, 0) + ' $FDP Allocated', html });
   } catch (err) {
     console.error('[EMAIL] sendPurchaseConfirmation failed:', err.message);
   }
@@ -244,7 +258,7 @@ async function sendReferralNotification(referrerWallet, purchase) {
       `
     );
 
-    await sendEmail(to, 'You Earned a Referral Bonus — ' + fmtNum(bonus.bonus_tokens, 0) + ' $FDP', html);
+    await sendEmail({ to, subject: 'You Earned a Referral Bonus — ' + fmtNum(bonus.bonus_tokens, 0) + ' $FDP', html });
   } catch (err) {
     console.error('[EMAIL] sendReferralNotification failed:', err.message);
   }
@@ -279,7 +293,7 @@ async function sendLargePurchaseAlert(purchase) {
     );
 
     for (const admin of admins.rows) {
-      await sendEmail(admin.email, 'Large Purchase Alert — ' + fmtUsd(purchase.usd_value), html);
+      await sendEmail({ to: admin.email, subject: 'Large Purchase Alert — ' + fmtUsd(purchase.usd_value), html });
     }
   } catch (err) {
     console.error('[EMAIL] sendLargePurchaseAlert failed:', err.message);
@@ -351,7 +365,7 @@ async function sendDailyAdminDigest() {
     );
 
     for (const admin of admins.rows) {
-      await sendEmail(admin.email, 'FlowDex Daily Digest — ' + today, html);
+      await sendEmail({ to: admin.email, subject: 'FlowDex Daily Digest — ' + today, html });
     }
   } catch (err) {
     console.error('[EMAIL] sendDailyAdminDigest failed:', err.message);

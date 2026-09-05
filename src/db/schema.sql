@@ -545,7 +545,7 @@ CREATE TABLE IF NOT EXISTS admin_backup_codes (
 
 -- ── Table 32: cms_settings ──
 -- Flat key/value store for admin-configurable settings that aren't page
--- content (e.g. sendgrid_api_key). Plain text, not encrypted — acceptable
+-- content (e.g. resend_api_key). Plain text, not encrypted — acceptable
 -- since every route that reads/writes this table is super_admin-gated.
 CREATE TABLE IF NOT EXISTS cms_settings (
   id SERIAL PRIMARY KEY,

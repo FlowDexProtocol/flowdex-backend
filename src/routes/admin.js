@@ -440,11 +440,11 @@ router.get('/2fa-setup', async (req, res) => {
 
 // ══ SETTINGS (super_admin only) ══
 
-// PUT /admin/settings/sendgrid — { api_key } — stores plaintext in
+// PUT /admin/settings/resend — { api_key } — stores plaintext in
 // cms_settings (acceptable: every route touching this table is
 // super_admin-gated). email-service.js reads this first, falling back to
-// the SENDGRID_API_KEY env var if no row is set.
-router.put('/settings/sendgrid', adminAuth, requireRole('super_admin'), async (req, res) => {
+// the RESEND_API_KEY env var if no row is set.
+router.put('/settings/resend', adminAuth, requireRole('super_admin'), async (req, res) => {
   try {
     const { api_key } = req.body;
     if (!api_key || typeof api_key !== 'string') {
@@ -452,19 +452,19 @@ router.put('/settings/sendgrid', adminAuth, requireRole('super_admin'), async (r
     }
 
     await pool.query(
-      `INSERT INTO cms_settings (key, value, updated_at) VALUES ('sendgrid_api_key', $1, NOW())
+      `INSERT INTO cms_settings (key, value, updated_at) VALUES ('resend_api_key', $1, NOW())
        ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()`,
       [api_key]
     );
 
-    await logAudit('sendgrid_key_updated', null, null, null, null, null,
-      'Admin updated the SendGrid API key', req.admin.username, req.ip);
-    res.json({ success: true, message: 'SendGrid API key saved.' });
+    await logAudit('resend_key_updated', null, null, null, null, null,
+      'Admin updated the Resend API key', req.admin.username, req.ip);
+    res.json({ success: true, message: 'Resend API key saved.' });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
 // POST /admin/settings/test-email — { to_email } — sends a real test email
-// using the stored/env SendGrid key and surfaces the actual send result
+// using the stored/env Resend key and surfaces the actual send result
 // (unlike every other email in this app, which is deliberately fail-silent
 // — an admin explicitly asking "does this work?" needs a real answer).
 router.post('/settings/test-email', adminAuth, requireRole('super_admin'), async (req, res) => {
