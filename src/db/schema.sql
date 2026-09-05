@@ -502,7 +502,14 @@ CREATE TABLE IF NOT EXISTS email_subscribers (
   subscribed_at TIMESTAMPTZ DEFAULT NOW(),
   is_active BOOLEAN DEFAULT true
 );
-CREATE INDEX IF NOT EXISTS idx_email_subscribers_wallet ON email_subscribers(wallet_address);
+-- idx_email_subscribers_wallet is created in setup.js, not here: on a
+-- database where email_subscribers predates this column, CREATE TABLE IF
+-- NOT EXISTS above is a no-op (the column is never backfilled), and an
+-- unconditional CREATE INDEX on wallet_address right here would crash with
+-- "column wallet_address does not exist" before setup.js's own
+-- ALTER TABLE ... ADD COLUMN IF NOT EXISTS migration ever runs. Creating the
+-- index only after that ALTER (see setup.js) works on both a fresh database
+-- and an existing one.
 
 -- ── Table 30: admin_users ──
 -- Defined before admin_backup_codes since that table's admin_id column
