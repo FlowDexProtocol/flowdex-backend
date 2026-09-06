@@ -104,6 +104,19 @@ router.get('/:wallet/receipt/:purchase_id', validateWalletParam, walletRateLimit
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
+// GET /api/buyer/:wallet/subscription — whether this wallet has an active
+// email subscription (email_subscribers.wallet_address is set by the
+// purchase-intent flow and by POST /api/subscribe when a wallet is connected)
+router.get('/:wallet/subscription', validateWalletParam, buyerAuth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT email FROM email_subscribers WHERE wallet_address = $1 AND is_active = true ORDER BY subscribed_at DESC LIMIT 1',
+      [req.params.wallet]
+    );
+    res.json({ subscribed: result.rows.length > 0, email: result.rows[0]?.email || null });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
 // GET /api/buyer/:wallet/notifications — unread notifications (frontend polls every 30s)
 router.get('/:wallet/notifications', validateWalletParam, buyerAuth, async (req, res) => {
   try {
