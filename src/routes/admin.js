@@ -552,6 +552,15 @@ router.get('/stats/by-chain', adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
+// GET /admin/stats/subscribers — active email subscriber count, for the
+// admin dashboard's "Email Subscribers" card
+router.get('/stats/subscribers', adminAuth, async (req, res) => {
+  try {
+    const result = await pool.query("SELECT COUNT(*) as count FROM email_subscribers WHERE is_active = true");
+    res.json({ count: parseInt(result.rows[0].count, 10) });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
 // GET /admin/supply — full token supply accounting
 router.get('/supply', adminAuth, async (req, res) => {
   try {
