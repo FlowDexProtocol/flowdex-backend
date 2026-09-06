@@ -341,7 +341,7 @@ const pageContent = {
       link_1_text: 'Home',
       link_1_url: '/',
       link_2_text: 'About',
-      link_2_url: '/#ecosystem',
+      link_2_url: '/about',
       link_3_text: 'Tokenomics',
       link_3_url: '/tokenomics',
       link_4_text: 'Roadmap',
