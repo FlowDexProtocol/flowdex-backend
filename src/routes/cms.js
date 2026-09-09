@@ -13,6 +13,7 @@ const cmsRoutes = express.Router();
 const cmsAdminRoutes = express.Router();
 const pool = require('../db/pool');
 const { logAudit } = require('../services/audit-service');
+const { requireRole } = require('../middleware/require-role');
 
 // ── Helpers ──
 
@@ -505,6 +506,64 @@ cmsAdminRoutes.put('/page/:page/:section/:field', async (req, res) => {
 cmsAdminRoutes.get('/page/:page', async (req, res) => {
   try {
     res.json(await getPageContent(req.params.page));
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// The router as a whole only requires 'editor' (mounted in server.js), but
+// deleting page content is destructive and irreversible — restricted to
+// super_admin specifically, same as the /admin/users management routes.
+
+// DELETE /admin/cms/page/:page/:section/:field — deletes a single field
+cmsAdminRoutes.delete('/page/:page/:section/:field', requireRole('super_admin'), async (req, res) => {
+  try {
+    const { page, section, field } = req.params;
+    const existing = await pool.query('SELECT * FROM cms_pages WHERE page=$1 AND section=$2 AND field=$3', [page, section, field]);
+    if (existing.rows.length === 0) return res.status(404).json({ success: false, error: 'Field not found' });
+
+    await pool.query('DELETE FROM cms_pages WHERE page=$1 AND section=$2 AND field=$3', [page, section, field]);
+    await logAudit(
+      'cms_page_field_deleted', null, null, null,
+      existing.rows[0], null,
+      `CMS page field deleted: ${page}.${section}.${field}`, req.admin.username, req.ip
+    );
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// DELETE /admin/cms/page/:page/:section — deletes every field in a section
+cmsAdminRoutes.delete('/page/:page/:section', requireRole('super_admin'), async (req, res) => {
+  try {
+    const { page, section } = req.params;
+    const existing = await pool.query('SELECT * FROM cms_pages WHERE page=$1 AND section=$2', [page, section]);
+    if (existing.rows.length === 0) return res.status(404).json({ success: false, error: 'Section not found' });
+
+    await pool.query('DELETE FROM cms_pages WHERE page=$1 AND section=$2', [page, section]);
+    await logAudit(
+      'cms_page_section_deleted', null, null, null,
+      { page, section, fields: existing.rows.map((r) => r.field) }, null,
+      `CMS page section deleted: ${page}.${section} (${existing.rows.length} field${existing.rows.length === 1 ? '' : 's'})`,
+      req.admin.username, req.ip
+    );
+    res.json({ success: true, deleted: existing.rows.length });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// DELETE /admin/cms/page/:page — deletes every section and field on a page
+cmsAdminRoutes.delete('/page/:page', requireRole('super_admin'), async (req, res) => {
+  try {
+    const { page } = req.params;
+    const existing = await pool.query('SELECT * FROM cms_pages WHERE page=$1', [page]);
+    if (existing.rows.length === 0) return res.status(404).json({ success: false, error: 'Page not found' });
+
+    await pool.query('DELETE FROM cms_pages WHERE page=$1', [page]);
+    const sections = [...new Set(existing.rows.map((r) => r.section))];
+    await logAudit(
+      'cms_page_deleted', null, null, null,
+      { page, sections, field_count: existing.rows.length }, null,
+      `CMS page deleted: ${page} (${existing.rows.length} field${existing.rows.length === 1 ? '' : 's'} across ${sections.length} section${sections.length === 1 ? '' : 's'})`,
+      req.admin.username, req.ip
+    );
+    res.json({ success: true, deleted: existing.rows.length });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
