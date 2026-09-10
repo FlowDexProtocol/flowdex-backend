@@ -75,8 +75,11 @@ app.use(express.json({ limit: '1mb' }));
 
 // Uploaded CMS images (banners, blog covers, team photos, …) — written by
 // POST /admin/upload. crossOriginResourcePolicy above already allows the
-// admin dashboard's own origin to load these in <img> tags.
-app.use('/uploads', express.static(path.join(__dirname, '../public/uploads')));
+// admin dashboard's own origin to load these in <img> tags. Filenames are
+// unique per upload (timestamp + random hex, never reused or overwritten),
+// so a 1-day cache is safe — the same URL never resolves to different
+// content later.
+app.use('/uploads', express.static(path.join(__dirname, '../public/uploads'), { maxAge: '1d' }));
 
 // Public rate limit — 100 requests/minute per IP (scenario 50)
 const publicLimiter = rateLimit({
