@@ -424,6 +424,60 @@ cmsAdminRoutes.post('/blog/:id/unpublish', async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
+// Blog categories are a plain JSON array under a single cms_settings row —
+// simpler than a whole table for what's just a pick-list, and follows the
+// same "flat key/value store" pattern cms_settings already exists for.
+const BLOG_CATEGORIES_KEY = 'blog_categories';
+const DEFAULT_BLOG_CATEGORIES = ['updates', 'research', 'announcements', 'partnerships'];
+
+async function getBlogCategories() {
+  const result = await pool.query('SELECT value FROM cms_settings WHERE key = $1', [BLOG_CATEGORIES_KEY]);
+  if (result.rows.length === 0) {
+    await pool.query(
+      `INSERT INTO cms_settings (key, value, updated_at) VALUES ($1, $2, NOW())
+       ON CONFLICT (key) DO NOTHING`,
+      [BLOG_CATEGORIES_KEY, JSON.stringify(DEFAULT_BLOG_CATEGORIES)]
+    );
+    return DEFAULT_BLOG_CATEGORIES;
+  }
+  try {
+    const parsed = JSON.parse(result.rows[0].value);
+    return Array.isArray(parsed) ? parsed : DEFAULT_BLOG_CATEGORIES;
+  } catch {
+    return DEFAULT_BLOG_CATEGORIES;
+  }
+}
+
+// GET /admin/cms/blog/categories
+cmsAdminRoutes.get('/blog/categories', async (req, res) => {
+  try {
+    res.json(await getBlogCategories());
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// POST /admin/cms/blog/categories — { name }
+cmsAdminRoutes.post('/blog/categories', async (req, res) => {
+  try {
+    const name = String(req.body.name || '').trim().toLowerCase();
+    if (!name) return res.status(400).json({ success: false, error: 'name is required' });
+    if (!/^[a-z0-9_-]+$/.test(name)) {
+      return res.status(400).json({ success: false, error: 'name must be lowercase letters, numbers, hyphens, or underscores only' });
+    }
+
+    const categories = await getBlogCategories();
+    if (!categories.includes(name)) {
+      categories.push(name);
+      await pool.query(
+        `INSERT INTO cms_settings (key, value, updated_at) VALUES ($1, $2, NOW())
+         ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+        [BLOG_CATEGORIES_KEY, JSON.stringify(categories)]
+      );
+      await logAudit('cms_blog_category_created', null, null, null, null, { name }, `CMS blog category added: ${name}`, req.admin.username, req.ip);
+    }
+    res.json({ success: true, categories });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
 // ── Page content ──
 
 // GET /admin/cms/pages — every distinct page name that has content,

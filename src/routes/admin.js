@@ -8,6 +8,9 @@ const router = express.Router();
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
+const path = require('path');
+const fs = require('fs');
+const multer = require('multer');
 const pool = require('../db/pool');
 const { adminAuth } = require('../middleware/admin-auth');
 const { requireRole } = require('../middleware/require-role');
@@ -436,6 +439,56 @@ router.get('/2fa-setup', async (req, res) => {
     const setup = await generate2FASetup();
     res.json({ success: true, ...setup });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// ══ FILE UPLOAD (super_admin + editor) ══
+
+const UPLOADS_DIR = path.join(__dirname, '../../public/uploads');
+fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
+const ALLOWED_UPLOAD_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg'];
+const ALLOWED_UPLOAD_MIMETYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'];
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, UPLOADS_DIR),
+    // timestamp + random hex so two admins uploading "logo.png" at once
+    // (or the same admin re-uploading the same filename) never collide.
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase();
+      cb(null, `${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext}`);
+    },
+  }),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (!ALLOWED_UPLOAD_EXTENSIONS.includes(ext) || !ALLOWED_UPLOAD_MIMETYPES.includes(file.mimetype)) {
+      return cb(new Error('Only jpg, jpeg, png, gif, webp, and svg files are allowed'));
+    }
+    cb(null, true);
+  },
+}).single('file');
+
+// POST /admin/upload — multipart/form-data with a "file" field. Returns a
+// path relative to this API's origin; the frontend prepends its own API
+// base URL (same pattern as every other CMS image_url field).
+router.post('/upload', adminAuth, requireRole('editor'), (req, res) => {
+  upload(req, res, async (err) => {
+    if (err instanceof multer.MulterError) {
+      const message = err.code === 'LIMIT_FILE_SIZE' ? 'File exceeds the 5MB limit' : err.message;
+      return res.status(400).json({ success: false, error: message });
+    }
+    if (err) return res.status(400).json({ success: false, error: err.message });
+    if (!req.file) return res.status(400).json({ success: false, error: 'No file uploaded' });
+
+    const url = `/uploads/${req.file.filename}`;
+    await logAudit(
+      'file_uploaded', null, null, null, null,
+      { filename: req.file.filename, size: req.file.size, mimetype: req.file.mimetype },
+      `File uploaded: ${req.file.filename}`, req.admin.username, req.ip
+    );
+    res.json({ success: true, url, filename: req.file.filename });
+  });
 });
 
 // ══ SETTINGS (super_admin only) ══

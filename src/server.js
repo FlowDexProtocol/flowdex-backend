@@ -10,6 +10,7 @@ const helmet = require('helmet');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const cron = require('node-cron');
+const path = require('path');
 
 const { errorHandler } = require('./middleware/error-handler');
 const pool = require('./db/pool');
@@ -71,6 +72,11 @@ app.use(helmet({
 }));
 
 app.use(express.json({ limit: '1mb' }));
+
+// Uploaded CMS images (banners, blog covers, team photos, …) — written by
+// POST /admin/upload. crossOriginResourcePolicy above already allows the
+// admin dashboard's own origin to load these in <img> tags.
+app.use('/uploads', express.static(path.join(__dirname, '../public/uploads')));
 
 // Public rate limit — 100 requests/minute per IP (scenario 50)
 const publicLimiter = rateLimit({

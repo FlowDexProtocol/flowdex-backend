@@ -6,3 +6,8 @@ npm-debug.log*
 .DS_Store
 dist/
 build/
+
+# Uploaded CMS images — written at runtime by POST /admin/upload, not
+# checked in. The directory itself is kept via public/uploads/.gitkeep.
+public/uploads/*
+!public/uploads/.gitkeep
