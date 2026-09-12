@@ -571,29 +571,81 @@ async function seedBlogPosts() {
   console.log(`Seeded ${inserted} blog post(s) (${blogPosts.length - inserted} already existed and were left untouched)`);
 }
 
+// Maps a page/section/field to the input the admin dashboard should render
+// for it. Checked in order — the first match wins — so put the specific
+// exceptions (image_url, description) ahead of the generic _url/_link
+// suffix rule.
+function inferFieldType(page, section, field) {
+  if (field === 'image_url') return 'media'; // ecosystem_N.image_url + logo.image_url
+  if (field === 'description') return 'textarea';
+  if (page === 'global' && section === 'logo' && field === 'type') return 'text';
+  if (page === 'global' && section === 'social') return 'url'; // twitter/telegram/discord
+  if (page === 'global' && section === 'support' && field === 'telegram') return 'url';
+  if (field.endsWith('_url') || field.endsWith('_link')) return 'url'; // cta_*_link, link_N_url, buy_button_url
+  if (page === 'tokenomics' && section === 'distribution') return 'number';
+  if ((page === 'terms' || page === 'privacy' || page === 'legal') && field === 'body') return 'textarea';
+  return 'text';
+}
+
 async function seedPageContent() {
   // DO NOTHING (not DO UPDATE) — this script is re-run on every deploy, and
   // an admin may have already edited a field via the CMS dashboard by then.
   // Re-seeding must never clobber a live edit; it only fills in fields that
-  // don't exist yet.
+  // don't exist yet (this deliberately means field_type/order on a field
+  // that already exists from before this migration is NOT backfilled here
+  // — a one-off migration query handles pre-existing rows instead).
   let inserted = 0;
   let skipped = 0;
   for (const [page, sections] of Object.entries(pageContent)) {
+    let sectionOrder = 0;
     for (const [section, fields] of Object.entries(sections)) {
+      let fieldOrder = 0;
       for (const [field, value] of Object.entries(fields)) {
+        const fieldType = inferFieldType(page, section, field);
         const result = await pool.query(
-          `INSERT INTO cms_pages (page, section, field, value, updated_at)
-           VALUES ($1,$2,$3,$4,NOW())
+          `INSERT INTO cms_pages (page, section, field, value, field_type, section_order, field_order, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())
            ON CONFLICT (page, section, field) DO NOTHING
            RETURNING id`,
-          [page, section, field, value]
+          [page, section, field, value, fieldType, sectionOrder, fieldOrder]
         );
         if (result.rows.length > 0) inserted++;
         else skipped++;
+        fieldOrder++;
       }
+      sectionOrder++;
     }
   }
   console.log(`Page content: ${inserted} fields inserted, ${skipped} already existed and were left untouched`);
+}
+
+// One-off backfill: rows inserted before this migration (field_type/order
+// columns didn't exist yet) all default to field_type='text',
+// section_order=0, field_order=0 from the ALTER TABLE. Re-derive the
+// correct field_type for any field seed-cms.js knows about, and reassign
+// orders to match pageContent's declaration order, WITHOUT touching value
+// (an admin may have already edited it).
+async function backfillFieldMeta() {
+  let updated = 0;
+  for (const [page, sections] of Object.entries(pageContent)) {
+    let sectionOrder = 0;
+    for (const [section, fields] of Object.entries(sections)) {
+      let fieldOrder = 0;
+      for (const field of Object.keys(fields)) {
+        const fieldType = inferFieldType(page, section, field);
+        const result = await pool.query(
+          `UPDATE cms_pages SET field_type = $4, section_order = $5, field_order = $6
+           WHERE page = $1 AND section = $2 AND field = $3
+             AND field_type = 'text' AND section_order = 0 AND field_order = 0`,
+          [page, section, field, fieldType, sectionOrder, fieldOrder]
+        );
+        updated += result.rowCount;
+        fieldOrder++;
+      }
+      sectionOrder++;
+    }
+  }
+  console.log(`Backfilled field_type/order for ${updated} pre-existing row(s)`);
 }
 
 async function seed() {
@@ -602,6 +654,7 @@ async function seed() {
     await seedFaqs();
     await seedBlogPosts();
     await seedPageContent();
+    await backfillFieldMeta();
     console.log('CMS seed complete');
   } catch (err) {
     console.error('CMS seed failed:', err.message);

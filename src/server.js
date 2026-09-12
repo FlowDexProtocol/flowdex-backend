@@ -81,6 +81,17 @@ app.use(express.json({ limit: '1mb' }));
 // content later.
 app.use('/uploads', express.static(path.join(__dirname, '../public/uploads'), { maxAge: '1d' }));
 
+// The whitepaper PDF, uploaded via POST /admin/upload/whitepaper (it
+// overwrites the same file, unlike /uploads' unique-per-upload filenames),
+// so no far-future cache here — a fresh upload must be visible immediately.
+// Served as its own route (not a public/ static mount) so nothing else
+// dropped in public/ is exposed by accident.
+app.get('/whitepaper.pdf', (req, res) => {
+  res.sendFile(path.join(__dirname, '../public/whitepaper.pdf'), (err) => {
+    if (err) res.status(404).json({ success: false, error: 'Whitepaper not found' });
+  });
+});
+
 // Public rate limit — 100 requests/minute per IP (scenario 50)
 const publicLimiter = rateLimit({
   windowMs: 60 * 1000,

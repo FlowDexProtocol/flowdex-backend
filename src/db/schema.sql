@@ -452,12 +452,19 @@ CREATE INDEX IF NOT EXISTS idx_cms_blog_published ON cms_blog_posts(is_published
 
 -- ── Table 26: cms_pages ──
 -- Editable page content (section titles, descriptions, any text block), keyed by page.section.field.
+-- field_type drives which input the admin dashboard renders (text/textarea/
+-- image/media/url/number/color) — purely a UI hint, never validated against
+-- the actual value server-side. section_order/field_order control display
+-- order within GET /api/cms/page/:page and the admin's page editor.
 CREATE TABLE IF NOT EXISTS cms_pages (
   id SERIAL PRIMARY KEY,
   page VARCHAR(50) NOT NULL,
   section VARCHAR(50) NOT NULL,
   field VARCHAR(50) NOT NULL,
   value TEXT NOT NULL,
+  field_type VARCHAR(20) NOT NULL DEFAULT 'text',
+  section_order INTEGER NOT NULL DEFAULT 0,
+  field_order INTEGER NOT NULL DEFAULT 0,
   UNIQUE(page, section, field),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );

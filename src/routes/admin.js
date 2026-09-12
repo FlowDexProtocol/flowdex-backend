@@ -491,6 +491,54 @@ router.post('/upload', adminAuth, requireRole('editor'), (req, res) => {
   });
 });
 
+// POST /admin/upload/whitepaper — multipart/form-data with a "file" field,
+// PDF only, max 20MB. Overwrites the single public/whitepaper.pdf (unlike
+// /admin/upload's unique-per-upload filenames — there's only ever one
+// current whitepaper), and records its URL in cms_settings so the public
+// GET /api/cms/settings/whitepaper endpoint (and any frontend consuming it)
+// doesn't need to guess the path.
+const PUBLIC_DIR = path.join(__dirname, '../../public');
+
+const whitepaperUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, PUBLIC_DIR),
+    filename: (req, file, cb) => cb(null, 'whitepaper.pdf'),
+  }),
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (ext !== '.pdf' || file.mimetype !== 'application/pdf') {
+      return cb(new Error('Only PDF files are allowed'));
+    }
+    cb(null, true);
+  },
+}).single('file');
+
+router.post('/upload/whitepaper', adminAuth, requireRole('editor'), (req, res) => {
+  whitepaperUpload(req, res, async (err) => {
+    if (err instanceof multer.MulterError) {
+      const message = err.code === 'LIMIT_FILE_SIZE' ? 'File exceeds the 20MB limit' : err.message;
+      return res.status(400).json({ success: false, error: message });
+    }
+    if (err) return res.status(400).json({ success: false, error: err.message });
+    if (!req.file) return res.status(400).json({ success: false, error: 'No file uploaded' });
+
+    const url = '/whitepaper.pdf';
+    await pool.query(
+      `INSERT INTO cms_settings (key, value, updated_at) VALUES ('whitepaper_url', $1, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()`,
+      [url]
+    );
+
+    await logAudit(
+      'whitepaper_uploaded', null, null, null, null,
+      { size: req.file.size },
+      'Whitepaper PDF uploaded', req.admin.username, req.ip
+    );
+    res.json({ success: true, url });
+  });
+});
+
 // ══ SETTINGS (super_admin only) ══
 
 // PUT /admin/settings/resend — { api_key } — stores plaintext in

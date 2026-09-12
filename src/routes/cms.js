@@ -53,8 +53,11 @@ async function generateUniqueSlug(title) {
   }
 }
 
-// GET /api/cms/page/:page and GET /admin/cms/page/:page share this — returns
-// an object keyed by "section.field".
+// GET /api/cms/page/:page — the public shape every landing/purchase-page
+// cms() helper expects: a flat object keyed by "section.field". Order
+// doesn't matter here (those sites read named fields, they don't iterate
+// this object for display order), so this intentionally stays unordered/
+// unchanged even though the table now has section_order/field_order.
 async function getPageContent(page) {
   const result = await pool.query('SELECT section, field, value FROM cms_pages WHERE page = $1', [page]);
   const content = {};
@@ -62,6 +65,21 @@ async function getPageContent(page) {
     content[`${row.section}.${row.field}`] = row.value;
   }
   return content;
+}
+
+// GET /admin/cms/page/:page — the admin dashboard's shape: every row in
+// full (value + field_type + order), ordered the way the editor should
+// display it. id as final tiebreak so freshly-added fields with identical
+// default orders (0, 0) still land in creation order rather than an
+// arbitrary one.
+async function getPageContentDetailed(page) {
+  const result = await pool.query(
+    `SELECT page, section, field, value, field_type, section_order, field_order, updated_at
+     FROM cms_pages WHERE page = $1
+     ORDER BY section_order ASC, field_order ASC, id ASC`,
+    [page]
+  );
+  return result.rows;
 }
 
 // ══════════════════════════════════════════════════
@@ -135,6 +153,19 @@ cmsRoutes.get('/blog/:slug', async (req, res) => {
 cmsRoutes.get('/page/:page', async (req, res) => {
   try {
     res.json(await getPageContent(req.params.page));
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// GET /api/cms/settings/whitepaper — public. Returns the whitepaper PDF's
+// URL as stored by POST /admin/upload/whitepaper, falling back to the
+// default path if nothing's been uploaded through the admin yet (a fresh
+// deploy still has public/whitepaper.pdf from the repo, just no
+// cms_settings row pointing at it).
+cmsRoutes.get('/settings/whitepaper', async (req, res) => {
+  try {
+    const result = await pool.query("SELECT value FROM cms_settings WHERE key = 'whitepaper_url'");
+    const url = result.rows[0]?.value || '/whitepaper.pdf';
+    res.json({ url });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
@@ -489,8 +520,15 @@ cmsAdminRoutes.get('/pages', async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
-// POST /admin/cms/page/bulk-update — { updates: [{ page, section, field, value }] }
+const VALID_FIELD_TYPES = ['text', 'textarea', 'image', 'media', 'url', 'number', 'color'];
+
+// POST /admin/cms/page/bulk-update — { updates: [{ page, section, field, value, field_type? }] }
 // Applies every update in one transaction — either they all land or none do.
+// A field_type on an existing field overrides its stored type; omitted,
+// the existing type is preserved (a plain value edit shouldn't silently
+// reset a field back to 'text'). New fields default to 'text' if omitted,
+// and are appended after whatever else already exists in that section/page
+// — new content shouldn't jump to the front of the admin's ordered view.
 cmsAdminRoutes.post('/page/bulk-update', async (req, res) => {
   const { updates } = req.body;
   if (!Array.isArray(updates) || updates.length === 0) {
@@ -500,19 +538,55 @@ cmsAdminRoutes.post('/page/bulk-update', async (req, res) => {
     if (!u || typeof u !== 'object' || !u.page || !u.section || !u.field || u.value === undefined || u.value === null) {
       return res.status(400).json({ success: false, error: 'Each update needs page, section, field, and value' });
     }
+    if (u.field_type !== undefined && u.field_type !== null && !VALID_FIELD_TYPES.includes(u.field_type)) {
+      return res.status(400).json({ success: false, error: `Invalid field_type: ${u.field_type}` });
+    }
   }
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const results = [];
+    // Per-transaction caches so several new fields/sections in one batch
+    // get sequential order values instead of all landing on the same one.
+    const nextSectionOrder = new Map(); // page -> next section_order
+    const nextFieldOrder = new Map(); // "page section" -> next field_order
+
     for (const u of updates) {
+      const existing = await client.query('SELECT 1 FROM cms_pages WHERE page=$1 AND section=$2 AND field=$3', [u.page, u.section, u.field]);
+
+      let sectionOrder = 0;
+      let fieldOrder = 0;
+      if (existing.rows.length === 0) {
+        const sectionKey = `${u.page} ${u.section}`;
+        if (!nextFieldOrder.has(sectionKey)) {
+          const r = await client.query(
+            'SELECT MAX(field_order) as maxf, MIN(section_order) as sec FROM cms_pages WHERE page=$1 AND section=$2',
+            [u.page, u.section]
+          );
+          nextFieldOrder.set(sectionKey, { field: (r.rows[0].maxf === null ? -1 : r.rows[0].maxf) + 1, section: r.rows[0].sec });
+        }
+        const entry = nextFieldOrder.get(sectionKey);
+        fieldOrder = entry.field;
+        entry.field += 1;
+
+        if (entry.section !== null) {
+          sectionOrder = entry.section;
+        } else {
+          if (!nextSectionOrder.has(u.page)) {
+            const r2 = await client.query('SELECT MAX(section_order) as m FROM cms_pages WHERE page=$1', [u.page]);
+            nextSectionOrder.set(u.page, (r2.rows[0].m === null ? -1 : r2.rows[0].m) + 1);
+          }
+          sectionOrder = nextSectionOrder.get(u.page);
+        }
+      }
+
       const result = await client.query(
-        `INSERT INTO cms_pages (page, section, field, value, updated_at)
-         VALUES ($1,$2,$3,$4,NOW())
-         ON CONFLICT (page, section, field) DO UPDATE SET value = $4, updated_at = NOW()
+        `INSERT INTO cms_pages (page, section, field, value, field_type, section_order, field_order, updated_at)
+         VALUES ($1,$2,$3,$4,COALESCE($5,'text'),$6,$7,NOW())
+         ON CONFLICT (page, section, field) DO UPDATE SET value = $4, field_type = COALESCE($5, cms_pages.field_type), updated_at = NOW()
          RETURNING *`,
-        [u.page, u.section, u.field, String(u.value)]
+        [u.page, u.section, u.field, String(u.value), u.field_type ?? null, sectionOrder, fieldOrder]
       );
       results.push(result.rows[0]);
     }
@@ -532,20 +606,26 @@ cmsAdminRoutes.post('/page/bulk-update', async (req, res) => {
   }
 });
 
+// PUT /admin/cms/page/:page/:section/:field — { value, field_type? }
+// Same field_type-preservation rule as bulk-update: omitted keeps whatever
+// was already stored.
 cmsAdminRoutes.put('/page/:page/:section/:field', async (req, res) => {
   try {
-    const { value } = req.body;
+    const { value, field_type } = req.body;
     if (value === undefined || value === null) return res.status(400).json({ success: false, error: 'value is required' });
+    if (field_type !== undefined && field_type !== null && !VALID_FIELD_TYPES.includes(field_type)) {
+      return res.status(400).json({ success: false, error: `Invalid field_type: ${field_type}` });
+    }
     const { page, section, field } = req.params;
 
     const existing = await pool.query('SELECT * FROM cms_pages WHERE page=$1 AND section=$2 AND field=$3', [page, section, field]);
 
     const result = await pool.query(
-      `INSERT INTO cms_pages (page, section, field, value, updated_at)
-       VALUES ($1,$2,$3,$4,NOW())
-       ON CONFLICT (page, section, field) DO UPDATE SET value = $4, updated_at = NOW()
+      `INSERT INTO cms_pages (page, section, field, value, field_type, updated_at)
+       VALUES ($1,$2,$3,$4,COALESCE($5,'text'),NOW())
+       ON CONFLICT (page, section, field) DO UPDATE SET value = $4, field_type = COALESCE($5, cms_pages.field_type), updated_at = NOW()
        RETURNING *`,
-      [page, section, field, String(value)]
+      [page, section, field, String(value), field_type ?? null]
     );
 
     await logAudit(
@@ -557,9 +637,44 @@ cmsAdminRoutes.put('/page/:page/:section/:field', async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
+// POST /admin/cms/page/reorder — { page, sections: ["hero", "ecosystem", ...] }
+// Sets section_order for every field belonging to each listed section,
+// in array order. Sections not listed are left untouched.
+cmsAdminRoutes.post('/page/reorder', async (req, res) => {
+  try {
+    const { page, sections } = req.body;
+    if (!page || !Array.isArray(sections) || sections.length === 0) {
+      return res.status(400).json({ success: false, error: 'page and a non-empty sections array are required' });
+    }
+    for (let i = 0; i < sections.length; i++) {
+      await pool.query('UPDATE cms_pages SET section_order = $1 WHERE page = $2 AND section = $3', [i, page, sections[i]]);
+    }
+    await logAudit('cms_page_sections_reordered', null, null, null, null, { page, sections }, `CMS sections reordered on ${page}`, req.admin.username, req.ip);
+    res.json({ success: true, page, order: sections });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// POST /admin/cms/page/reorder-fields — { page, section, fields: ["title", "description", ...] }
+cmsAdminRoutes.post('/page/reorder-fields', async (req, res) => {
+  try {
+    const { page, section, fields } = req.body;
+    if (!page || !section || !Array.isArray(fields) || fields.length === 0) {
+      return res.status(400).json({ success: false, error: 'page, section, and a non-empty fields array are required' });
+    }
+    for (let i = 0; i < fields.length; i++) {
+      await pool.query('UPDATE cms_pages SET field_order = $1 WHERE page = $2 AND section = $3 AND field = $4', [i, page, section, fields[i]]);
+    }
+    await logAudit(
+      'cms_page_fields_reordered', null, null, null, null, { page, section, fields },
+      `CMS fields reordered on ${page}.${section}`, req.admin.username, req.ip
+    );
+    res.json({ success: true, page, section, order: fields });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
 cmsAdminRoutes.get('/page/:page', async (req, res) => {
   try {
-    res.json(await getPageContent(req.params.page));
+    res.json(await getPageContentDetailed(req.params.page));
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 

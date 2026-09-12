@@ -53,6 +53,16 @@ async function setup() {
     await pool.query('CREATE INDEX IF NOT EXISTS idx_email_subscribers_wallet ON email_subscribers(wallet_address)');
     console.log('Migration columns OK.');
 
+    // Migration-safe: field_type/section_order/field_order only exist in
+    // schema.sql's cms_pages definition on a brand-new table.
+    console.log('Ensuring cms_pages field_type/section_order/field_order exist...');
+    await pool.query(`
+      ALTER TABLE cms_pages ADD COLUMN IF NOT EXISTS field_type VARCHAR(20) NOT NULL DEFAULT 'text';
+      ALTER TABLE cms_pages ADD COLUMN IF NOT EXISTS section_order INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE cms_pages ADD COLUMN IF NOT EXISTS field_order INTEGER NOT NULL DEFAULT 0;
+    `);
+    console.log('cms_pages columns OK.');
+
     // Seed the bootstrap super_admin from the env-var credentials — only
     // when admin_users is completely empty, so this is a no-op on every
     // subsequent run. This is what makes the first login after migrating
