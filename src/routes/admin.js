@@ -446,8 +446,11 @@ router.get('/2fa-setup', async (req, res) => {
 const UPLOADS_DIR = path.join(__dirname, '../../public/uploads');
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
-const ALLOWED_UPLOAD_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg'];
-const ALLOWED_UPLOAD_MIMETYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'];
+// mp4/json (Lottie) added alongside the original image set so this one
+// endpoint also backs the CMS's "media" field type (logo/ecosystem-card
+// animations) — not just static images.
+const ALLOWED_UPLOAD_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.mp4', '.json'];
+const ALLOWED_UPLOAD_MIMETYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml', 'video/mp4', 'application/json'];
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -459,11 +462,13 @@ const upload = multer({
       cb(null, `${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext}`);
     },
   }),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  // mp4s are far bigger than the images this limit was originally sized
+  // for — 5MB is plenty for a static image but not a short looping video.
+  limits: { fileSize: 15 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
     if (!ALLOWED_UPLOAD_EXTENSIONS.includes(ext) || !ALLOWED_UPLOAD_MIMETYPES.includes(file.mimetype)) {
-      return cb(new Error('Only jpg, jpeg, png, gif, webp, and svg files are allowed'));
+      return cb(new Error('Only jpg, jpeg, png, gif, webp, svg, mp4, and json (Lottie) files are allowed'));
     }
     cb(null, true);
   },
@@ -475,7 +480,7 @@ const upload = multer({
 router.post('/upload', adminAuth, requireRole('editor'), (req, res) => {
   upload(req, res, async (err) => {
     if (err instanceof multer.MulterError) {
-      const message = err.code === 'LIMIT_FILE_SIZE' ? 'File exceeds the 5MB limit' : err.message;
+      const message = err.code === 'LIMIT_FILE_SIZE' ? 'File exceeds the 15MB limit' : err.message;
       return res.status(400).json({ success: false, error: message });
     }
     if (err) return res.status(400).json({ success: false, error: err.message });
