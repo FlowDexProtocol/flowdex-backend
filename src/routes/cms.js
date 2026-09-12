@@ -54,12 +54,16 @@ async function generateUniqueSlug(title) {
 }
 
 // GET /api/cms/page/:page — the public shape every landing/purchase-page
-// cms() helper expects: a flat object keyed by "section.field". Order
-// doesn't matter here (those sites read named fields, they don't iterate
-// this object for display order), so this intentionally stays unordered/
-// unchanged even though the table now has section_order/field_order.
+// cms() helper expects: a flat object keyed by "section.field". Every
+// consumer looks fields up by key rather than iterating this object, so
+// the ordering below has no functional effect on them — it's here only so
+// the object's own key order (and therefore e.g. JSON.stringify output)
+// matches section_order/field_order, same as the admin's detailed view.
 async function getPageContent(page) {
-  const result = await pool.query('SELECT section, field, value FROM cms_pages WHERE page = $1', [page]);
+  const result = await pool.query(
+    'SELECT section, field, value FROM cms_pages WHERE page = $1 ORDER BY section_order ASC, field_order ASC, id ASC',
+    [page]
+  );
   const content = {};
   for (const row of result.rows) {
     content[`${row.section}.${row.field}`] = row.value;
