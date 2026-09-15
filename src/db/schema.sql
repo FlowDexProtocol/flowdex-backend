@@ -353,7 +353,12 @@ CREATE TABLE IF NOT EXISTS otc_allocations (
   cancelled_by INTEGER,
   cancel_reason TEXT,
   paid_amount DECIMAL(18,2) NOT NULL DEFAULT 0,
-  paid_tokens DECIMAL(36,8) NOT NULL DEFAULT 0
+  paid_tokens DECIMAL(36,8) NOT NULL DEFAULT 0,
+  -- Cumulative tokens given back via /cancel + /partial-cancel — kept
+  -- separate from total_tokens_allocated (which is shrunk in place by
+  -- each cancellation to reflect the deal's current real size) so "how
+  -- much has been returned in total" stays queryable after the fact.
+  tokens_returned DECIMAL(36,8) NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_otc_payment_status ON otc_allocations(status);
 CREATE INDEX IF NOT EXISTS idx_otc_wallet ON otc_allocations(investor_wallet);

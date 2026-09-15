@@ -1336,9 +1336,10 @@ router.post('/otc/:id/cancel', adminAuth, requireRole('super_admin'), async (req
 
     await client.query(
       `UPDATE otc_allocations
-       SET status = 'cancelled', cancelled_at = NOW(), cancelled_by = $1, cancel_reason = $2, total_tokens_allocated = $3
+       SET status = 'cancelled', cancelled_at = NOW(), cancelled_by = $1, cancel_reason = $2,
+           total_tokens_allocated = $3, tokens_returned = tokens_returned + $5
        WHERE id = $4`,
-      [req.admin.user_id, reason || null, newTotalTokens, id]
+      [req.admin.user_id, reason || null, newTotalTokens, id, tokensReturned]
     );
 
     await logAudit(
@@ -1420,9 +1421,10 @@ router.post('/otc/:id/partial-cancel', adminAuth, requireRole('super_admin'), as
 
     await client.query(
       `UPDATE otc_allocations
-       SET total_tokens_allocated = $1, total_allocated_usd = $2, daily_amount_usd = $3, status = $4
+       SET total_tokens_allocated = $1, total_allocated_usd = $2, daily_amount_usd = $3, status = $4,
+           tokens_returned = tokens_returned + $6
        WHERE id = $5`,
-      [newTotalTokens, newTotalUsd, newDailyUsd, newStatus, id]
+      [newTotalTokens, newTotalUsd, newDailyUsd, newStatus, id, cancelAmount]
     );
 
     await logAudit(

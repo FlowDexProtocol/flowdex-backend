@@ -73,6 +73,7 @@ async function setup() {
       ALTER TABLE otc_allocations ADD COLUMN IF NOT EXISTS cancel_reason TEXT;
       ALTER TABLE otc_allocations ADD COLUMN IF NOT EXISTS paid_amount DECIMAL(18,2) NOT NULL DEFAULT 0;
       ALTER TABLE otc_allocations ADD COLUMN IF NOT EXISTS paid_tokens DECIMAL(36,8) NOT NULL DEFAULT 0;
+      ALTER TABLE otc_allocations ADD COLUMN IF NOT EXISTS tokens_returned DECIMAL(36,8) NOT NULL DEFAULT 0;
     `);
     await pool.query('CREATE INDEX IF NOT EXISTS idx_otc_payment_status ON otc_allocations(status)');
     console.log('otc_allocations columns OK.');
