@@ -80,6 +80,12 @@ async function alertLatePayment(usdValue, wallet, intentId) {
     wallet.substring(0,8) + '...' + wallet.slice(-4) + ' for expired intent #' + intentId, 'warning');
 }
 
+async function alertOtcCancelled(tokensReturned, tierName) {
+  await sendAlert('OTC Allocation Cancelled',
+    Number(tokensReturned).toLocaleString() + ' $FDP returned to the presale pool' +
+    (tierName ? ' (Tier ' + tierName + ')' : '') + '.', 'warning');
+}
+
 async function alertUnknownToken(currency, tokenName, amount, contractAddress, chain, senderWallet) {
   await sendAlert('Unknown Token Received',
     'Token: ' + currency + ' (' + (tokenName || 'unknown') + ')\n' +
@@ -94,5 +100,5 @@ async function alertUnknownToken(currency, tokenName, amount, contractAddress, c
 module.exports = {
   sendAlert, alertReconciliationMismatch, alertTierNearlyFull,
   alertWebhookDown, alertSupplyLow, alertLargePurchase, alertTierAdvanced, alertUnknownToken,
-  alertLatePayment,
+  alertLatePayment, alertOtcCancelled,
 };

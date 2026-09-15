@@ -343,8 +343,19 @@ CREATE TABLE IF NOT EXISTS otc_allocations (
   payment_reference VARCHAR(255),
   notes TEXT,
   day_gmt4 DATE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  -- status tracks payment/cancellation lifecycle ('allocated'/'partial'/
+  -- 'completed'/'cancelled') — independent of drip_status, which only
+  -- tracks whether the token drip itself is 'active'/'paused'/'completed'.
+  -- processOtcDrip() additionally skips any row with status='cancelled'.
+  status VARCHAR(20) NOT NULL DEFAULT 'allocated',
+  cancelled_at TIMESTAMPTZ,
+  cancelled_by INTEGER,
+  cancel_reason TEXT,
+  paid_amount DECIMAL(18,2) NOT NULL DEFAULT 0,
+  paid_tokens DECIMAL(36,8) NOT NULL DEFAULT 0
 );
+CREATE INDEX IF NOT EXISTS idx_otc_payment_status ON otc_allocations(status);
 CREATE INDEX IF NOT EXISTS idx_otc_wallet ON otc_allocations(investor_wallet);
 CREATE INDEX IF NOT EXISTS idx_otc_status ON otc_allocations(drip_status);
 

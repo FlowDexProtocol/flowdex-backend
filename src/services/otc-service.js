@@ -37,7 +37,10 @@ async function createOtcAllocation(investorName, investorWallet, amountUsd, paym
 
 async function processOtcDrip() {
   try {
-    const actives = await pool.query("SELECT * FROM otc_allocations WHERE drip_status = 'active'");
+    // status != 'cancelled' guards against a cancelled allocation continuing
+    // to drip out tokens that were supposedly "returned to the pool" — the
+    // only status value that should ever stop a drip already in progress.
+    const actives = await pool.query("SELECT * FROM otc_allocations WHERE drip_status = 'active' AND status != 'cancelled'");
     for (const alloc of actives.rows) {
       const now = new Date();
       const start = new Date(alloc.drip_start_time);

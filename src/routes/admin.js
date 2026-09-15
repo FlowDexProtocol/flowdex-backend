@@ -18,6 +18,7 @@ const { verify2FA, generate2FASetup, generateTotpSecret } = require('../middlewa
 const { loginRateLimit, recordFailedLogin, recordSuccessfulLogin } = require('../middleware/admin-login-rate-limit');
 const { logAudit } = require('../services/audit-service');
 const { createOtcAllocation, processOtcDrip } = require('../services/otc-service');
+const { alertOtcCancelled } = require('../services/alert-service');
 const { getSupplyStatus } = require('../services/supply-service');
 const { scanForMissedPayments } = require('../services/payment-recovery');
 const { confirmPayment } = require('../services/payment-service');
@@ -1154,9 +1155,23 @@ router.get('/otc/today', adminAuth, requireRole('super_admin'), async (req, res)
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
+// ?status=allocated,partial,completed,cancelled — comma-separated, filters
+// the payment/cancellation status column (not drip_status). Omitted =
+// every status, so the admin UI's own badges are what distinguish them.
 router.get('/otc/history', adminAuth, requireRole('super_admin'), async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM otc_allocations ORDER BY created_at DESC LIMIT 500');
+    const { status } = req.query;
+    let query = 'SELECT * FROM otc_allocations';
+    const params = [];
+    if (status) {
+      const statuses = String(status).split(',').map((s) => s.trim()).filter(Boolean);
+      if (statuses.length > 0) {
+        params.push(statuses);
+        query += ` WHERE status = ANY($${params.length})`;
+      }
+    }
+    query += ' ORDER BY created_at DESC LIMIT 500';
+    const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
@@ -1198,6 +1213,236 @@ router.get('/otc/investor/:wallet', adminAuth, requireRole('super_admin'), async
     const claims = await pool.query('SELECT * FROM claims WHERE buyer_wallet = $1', [wallet]);
     res.json({ success: true, allocations: allocations.rows, claims: claims.rows });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// POST /admin/otc/:id/record-payment — { usd_amount, tx_hash, chain }
+// Records a (possibly partial, possibly repeated) payment against an
+// allocation. Independent of the drip mechanism — the drip already
+// assumes an OTC deal is paid up front (payment_method/payment_reference
+// captured at creation); this is a separate confirmation/reconciliation
+// layer so an admin can track actual wire/crypto receipt against the deal,
+// which cancel/partial-cancel below then use to know how much is unpaid.
+router.post('/otc/:id/record-payment', adminAuth, requireRole('super_admin'), async (req, res) => {
+  try {
+    const { usd_amount, tx_hash, chain } = req.body;
+    const id = req.params.id;
+    const amount = parseFloat(usd_amount);
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ success: false, error: 'usd_amount must be greater than 0' });
+    }
+
+    const allocResult = await pool.query('SELECT * FROM otc_allocations WHERE id = $1', [id]);
+    if (allocResult.rows.length === 0) return res.status(404).json({ success: false, error: 'OTC allocation not found' });
+    const alloc = allocResult.rows[0];
+
+    if (!['allocated', 'partial'].includes(alloc.status)) {
+      return res.status(400).json({ success: false, error: `Cannot record a payment against an allocation with status '${alloc.status}'` });
+    }
+
+    const tierPrice = parseFloat(alloc.tier_price);
+    const tokensForPayment = amount / tierPrice;
+    const newPaidAmount = parseFloat(alloc.paid_amount) + amount;
+    const newPaidTokens = parseFloat(alloc.paid_tokens) + tokensForPayment;
+    const totalTokens = parseFloat(alloc.total_tokens_allocated);
+    const newStatus = newPaidTokens >= totalTokens ? 'completed' : 'partial';
+
+    const result = await pool.query(
+      `UPDATE otc_allocations SET paid_amount = $1, paid_tokens = $2, status = $3 WHERE id = $4 RETURNING *`,
+      [newPaidAmount, newPaidTokens, newStatus, id]
+    );
+
+    await logAudit(
+      'otc_payment_recorded', null, alloc.investor_wallet, tx_hash || null,
+      { paid_amount: parseFloat(alloc.paid_amount), paid_tokens: parseFloat(alloc.paid_tokens), status: alloc.status },
+      { paid_amount: newPaidAmount, paid_tokens: newPaidTokens, status: newStatus },
+      `Payment of $${amount.toLocaleString()} recorded against OTC allocation #${id}${chain ? ' on ' + chain : ''}`,
+      req.admin.username, req.ip
+    );
+
+    res.json({ success: true, allocation: result.rows[0] });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// Shared by /cancel and /partial-cancel: how many tokens can actually be
+// pulled back from this allocation right now. Bounded by two independent
+// things — tokens the investor hasn't paid for yet (per record-payment
+// above), and tokens the drip hasn't already released (per the real
+// otc_drip_log ledger, not drip_released_usd/tier_price, since tier_price
+// can differ across log entries if the active tier advanced mid-drip).
+// Whichever is smaller is the ceiling: paid-for tokens are the investor's
+// regardless of drip progress, and already-dripped tokens are gone
+// regardless of payment status.
+async function getOtcCancellableTokens(client, alloc) {
+  const totalTokens = parseFloat(alloc.total_tokens_allocated);
+  const paidTokens = parseFloat(alloc.paid_tokens);
+  const unpaidTokens = Math.max(totalTokens - paidTokens, 0);
+
+  const drippedResult = await client.query(
+    'SELECT COALESCE(SUM(tokens), 0) as t FROM otc_drip_log WHERE otc_allocation_id = $1',
+    [alloc.id]
+  );
+  const alreadyDripped = parseFloat(drippedResult.rows[0].t);
+  const maxReturnable = Math.max(totalTokens - alreadyDripped, 0);
+
+  return { unpaidTokens, maxReturnable, cancellable: Math.min(unpaidTokens, maxReturnable) };
+}
+
+// generateClaimsForTier (claims-service.js) reads total_tokens_allocated
+// exactly once, when a tier closes, and never revisits it — shrinking an
+// allocation after that would desync an already-issued claim from what's
+// actually still available. Cancellation is refused once that's happened
+// rather than silently producing a stale claim.
+async function otcHasGeneratedClaims(client, alloc) {
+  const result = await client.query(
+    'SELECT 1 FROM claims WHERE buyer_wallet = $1 AND tier_id = $2',
+    [alloc.investor_wallet, alloc.tier_at_allocation]
+  );
+  return result.rows.length > 0;
+}
+
+// POST /admin/otc/:id/cancel — { reason? }
+// Cancels the entire remaining (undelivered/unpaid) portion of an OTC
+// allocation. See getOtcCancellableTokens for how "remaining" is bounded.
+router.post('/otc/:id/cancel', adminAuth, requireRole('super_admin'), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { reason } = req.body;
+    const id = req.params.id;
+
+    const allocResult = await client.query('SELECT * FROM otc_allocations WHERE id = $1 FOR UPDATE', [id]);
+    if (allocResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ success: false, error: 'OTC allocation not found' });
+    }
+    const alloc = allocResult.rows[0];
+
+    if (!['allocated', 'partial'].includes(alloc.status)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ success: false, error: `Cannot cancel an allocation with status '${alloc.status}'` });
+    }
+
+    if (await otcHasGeneratedClaims(client, alloc)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ success: false, error: "Claims have already been generated for this allocation's tier — cannot cancel." });
+    }
+
+    const { cancellable: tokensReturned } = await getOtcCancellableTokens(client, alloc);
+    const totalTokens = parseFloat(alloc.total_tokens_allocated);
+    const newTotalTokens = Math.max(totalTokens - tokensReturned, 0);
+
+    const tierResult = await client.query('SELECT * FROM tiers WHERE is_active = true LIMIT 1');
+    const activeTier = tierResult.rows[0] || null;
+
+    await client.query(
+      `UPDATE otc_allocations
+       SET status = 'cancelled', cancelled_at = NOW(), cancelled_by = $1, cancel_reason = $2, total_tokens_allocated = $3
+       WHERE id = $4`,
+      [req.admin.user_id, reason || null, newTotalTokens, id]
+    );
+
+    await logAudit(
+      'otc_cancelled', null, alloc.investor_wallet, null,
+      { status: alloc.status, total_tokens_allocated: totalTokens },
+      { status: 'cancelled', tokens_returned: tokensReturned, tier: activeTier?.id },
+      `OTC allocation #${id} cancelled. ${tokensReturned.toLocaleString()} tokens returned to Tier ${activeTier?.name || activeTier?.id || 'N/A'}. Reason: ${reason || 'none provided'}`,
+      req.admin.username, req.ip
+    );
+
+    await client.query('COMMIT');
+    await alertOtcCancelled(tokensReturned, activeTier?.name).catch(() => {});
+
+    res.json({ success: true, tokens_returned: tokensReturned, returned_to_tier: activeTier?.name || null });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ success: false, error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /admin/otc/:id/partial-cancel — { tokens_to_cancel, reason? }
+router.post('/otc/:id/partial-cancel', adminAuth, requireRole('super_admin'), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { reason } = req.body;
+    const id = req.params.id;
+    const cancelAmount = parseFloat(req.body.tokens_to_cancel);
+
+    if (!cancelAmount || cancelAmount <= 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ success: false, error: 'tokens_to_cancel must be greater than 0' });
+    }
+
+    const allocResult = await client.query('SELECT * FROM otc_allocations WHERE id = $1 FOR UPDATE', [id]);
+    if (allocResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ success: false, error: 'OTC allocation not found' });
+    }
+    const alloc = allocResult.rows[0];
+
+    if (!['allocated', 'partial'].includes(alloc.status)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ success: false, error: `Cannot cancel an allocation with status '${alloc.status}'` });
+    }
+
+    if (await otcHasGeneratedClaims(client, alloc)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ success: false, error: "Claims have already been generated for this allocation's tier — cannot cancel." });
+    }
+
+    const { unpaidTokens, maxReturnable } = await getOtcCancellableTokens(client, alloc);
+    if (cancelAmount > unpaidTokens) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ success: false, error: `Cannot cancel more than the unpaid amount (${unpaidTokens.toLocaleString()} tokens unpaid)` });
+    }
+    if (cancelAmount > maxReturnable) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ success: false, error: `Cannot cancel more than the undelivered amount (${maxReturnable.toLocaleString()} tokens not yet dripped)` });
+    }
+
+    const totalTokens = parseFloat(alloc.total_tokens_allocated);
+    const newTotalTokens = totalTokens - cancelAmount;
+    const remainingUnpaid = unpaidTokens - cancelAmount;
+    const newStatus = remainingUnpaid <= 0 ? 'completed' : 'partial';
+
+    // Shrink the USD-denominated fields proportionally so daily_amount_usd
+    // (what the drip actually paces against) stays consistent with the
+    // reduced token total.
+    const tierPrice = parseFloat(alloc.tier_price);
+    const usdToCancel = cancelAmount * tierPrice;
+    const newTotalUsd = Math.max(parseFloat(alloc.total_allocated_usd) - usdToCancel, 0);
+    const newDailyUsd = Math.max(parseFloat(alloc.daily_amount_usd) - usdToCancel, 0);
+
+    const tierResult = await client.query('SELECT * FROM tiers WHERE is_active = true LIMIT 1');
+    const activeTier = tierResult.rows[0] || null;
+
+    await client.query(
+      `UPDATE otc_allocations
+       SET total_tokens_allocated = $1, total_allocated_usd = $2, daily_amount_usd = $3, status = $4
+       WHERE id = $5`,
+      [newTotalTokens, newTotalUsd, newDailyUsd, newStatus, id]
+    );
+
+    await logAudit(
+      'otc_partial_cancelled', null, alloc.investor_wallet, null,
+      { total_tokens_allocated: totalTokens, status: alloc.status },
+      { total_tokens_allocated: newTotalTokens, status: newStatus, tokens_returned: cancelAmount },
+      `OTC allocation #${id} partially cancelled. ${cancelAmount.toLocaleString()} tokens returned to Tier ${activeTier?.name || activeTier?.id || 'N/A'}. Reason: ${reason || 'none provided'}`,
+      req.admin.username, req.ip
+    );
+
+    await client.query('COMMIT');
+    await alertOtcCancelled(cancelAmount, activeTier?.name).catch(() => {});
+
+    res.json({ success: true, tokens_returned: cancelAmount, returned_to_tier: activeTier?.name || null, new_status: newStatus });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ success: false, error: err.message });
+  } finally {
+    client.release();
+  }
 });
 
 // ══ DISPLAY OVERRIDES ══

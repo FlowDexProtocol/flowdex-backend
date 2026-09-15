@@ -63,6 +63,20 @@ async function setup() {
     `);
     console.log('cms_pages columns OK.');
 
+    // Migration-safe: status/cancellation/payment-tracking columns only
+    // exist in schema.sql's otc_allocations definition on a brand-new table.
+    console.log('Ensuring otc_allocations status/cancellation/payment columns exist...');
+    await pool.query(`
+      ALTER TABLE otc_allocations ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'allocated';
+      ALTER TABLE otc_allocations ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
+      ALTER TABLE otc_allocations ADD COLUMN IF NOT EXISTS cancelled_by INTEGER;
+      ALTER TABLE otc_allocations ADD COLUMN IF NOT EXISTS cancel_reason TEXT;
+      ALTER TABLE otc_allocations ADD COLUMN IF NOT EXISTS paid_amount DECIMAL(18,2) NOT NULL DEFAULT 0;
+      ALTER TABLE otc_allocations ADD COLUMN IF NOT EXISTS paid_tokens DECIMAL(36,8) NOT NULL DEFAULT 0;
+    `);
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_otc_payment_status ON otc_allocations(status)');
+    console.log('otc_allocations columns OK.');
+
     // Seed the bootstrap super_admin from the env-var credentials — only
     // when admin_users is completely empty, so this is a no-op on every
     // subsequent run. This is what makes the first login after migrating
