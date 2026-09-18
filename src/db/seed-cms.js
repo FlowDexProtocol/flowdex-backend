@@ -190,9 +190,30 @@ const pageContent = {
       trust_2: 'Community Growing',
       trust_3: '6 Chains',
     },
+    announcement: {
+      text: 'Tier 1 closing soon! Buy $FDP at $0.001 before the price increases.',
+      link: 'https://purchase.flowdexprotocol.com',
+      active: 'true',
+    },
+    trust: {
+      item_1: 'Audit in Progress',
+      icon_1: '🔒',
+      item_2: '6 Chains Supported',
+      icon_2: '⛓',
+      item_3: 'Community Growing',
+      icon_3: '👥',
+      item_4: 'Non-Custodial',
+      icon_4: '🔐',
+      item_5: 'Email Verified',
+      icon_5: '✉',
+    },
+    social_proof: {
+      text: 'Join early supporters buying $FDP',
+    },
     presale_card: {
       label: 'Stage 1: Genesis',
       tokens_accepted: 'ETH · USDT · USDC · BNB · SOL · BTC · TRX',
+      countdown_text: 'Tier 1 closes at',
     },
     metrics: {
       label_1: 'Total Raised',
@@ -203,6 +224,9 @@ const pageContent = {
     ecosystem: {
       title: 'The FlowDex Ecosystem',
       subtitle: 'A complete DeFi infrastructure for the next generation of finance.',
+    },
+    eco_cta: {
+      text: 'Be a Part of the FlowDex Ecosystem',
     },
     ecosystem_1: {
       title: 'Universal Exchange',
@@ -245,6 +269,26 @@ const pageContent = {
         'Track all your holdings across every chain in one dashboard. Real-time P&L, historical performance, and automated alerts on your positions.',
       tags: 'Multi-Chain,Real-Time P&L,Alerts',
       image_url: '',
+    },
+    tab_presale: {
+      label: 'Presale Live',
+      description: '$FDP starts at $0.001 per token. Listing price $0.05. 8 tiers. Earlier you buy, bigger the discount.',
+    },
+    tab_exchange: {
+      label: 'Universal Exchange',
+      description: 'One place to trade everything. Crypto, stocks, forex, commodities. Best price across every DEX and liquidity pool.',
+    },
+    tab_intelligence: {
+      label: 'Intelligence Terminal',
+      description: 'AI that watches the blockchain. Tracks whale movements, spots patterns before breakouts. Every signal from on-chain data.',
+    },
+    tab_staking: {
+      label: 'Staking & Fee Sharing',
+      description: 'Stake $FDP to earn 40% of all protocol trading fees. Every trade across every market generates revenue for stakers.',
+    },
+    tab_flowchain: {
+      label: 'FlowChain — Layer 1',
+      description: 'Our own Layer 1 blockchain. Built for high-speed trading and cross-chain settlement. $FDP holders become validators.',
     },
     utility: {
       title: '$FDP Powers Everything',
@@ -304,6 +348,30 @@ const pageContent = {
       label: 'Presale Vesting',
       description: 'Each tier has different vesting terms. Earlier tiers have longer vesting but the lowest price.',
     },
+    howto: {
+      title: 'How to Buy $FDP',
+      subtitle: 'Four steps. No KYC. Under 5 minutes.',
+    },
+    howto_1: {
+      title: 'Connect Wallet',
+      description: 'MetaMask, Trust Wallet, Coinbase, or 300+ wallets via WalletConnect',
+      icon: '🦊',
+    },
+    howto_2: {
+      title: 'Choose Crypto',
+      description: 'Pay with ETH, USDT, USDC, BNB, SOL, BTC, or TRX',
+      icon: '💰',
+    },
+    howto_3: {
+      title: 'Send Payment',
+      description: 'Scan QR or copy address. 15-minute price lock.',
+      icon: '📱',
+    },
+    howto_4: {
+      title: 'Tokens Allocated',
+      description: 'Confirmed on-chain. Check your portfolio and vesting schedule.',
+      icon: '✅',
+    },
   },
 
   // ── Site-wide settings (page = 'global') ──
@@ -332,6 +400,9 @@ const pageContent = {
       disclaimer:
         'This is not financial advice. $FDP is a utility token. Cryptocurrency purchases carry risk, including total loss of funds.',
       copyright: '© 2026 FlowDex Protocol. All rights reserved.',
+    },
+    cookie: {
+      text: 'We use cookies for analytics to improve your experience.',
     },
   },
 
@@ -577,11 +648,15 @@ async function seedBlogPosts() {
 // suffix rule.
 function inferFieldType(page, section, field) {
   if (field === 'image_url') return 'media'; // ecosystem_N.image_url + logo.image_url
+  // howto_N step captions are short one-liners, not paragraph body text
+  // like every other "description" field — checked before that generic
+  // rule below.
+  if (page === 'home' && /^howto_\d+$/.test(section) && field === 'description') return 'text';
   if (field === 'description') return 'textarea';
   if (page === 'global' && section === 'logo' && field === 'type') return 'text';
   if (page === 'global' && section === 'social') return 'url'; // twitter/telegram/discord
   if (page === 'global' && section === 'support' && field === 'telegram') return 'url';
-  if (field.endsWith('_url') || field.endsWith('_link')) return 'url'; // cta_*_link, link_N_url, buy_button_url
+  if (field === 'link' || field.endsWith('_url') || field.endsWith('_link')) return 'url'; // announcement.link, cta_*_link, link_N_url, buy_button_url
   if (page === 'tokenomics' && section === 'distribution') return 'number';
   if ((page === 'terms' || page === 'privacy' || page === 'legal') && field === 'body') return 'textarea';
   return 'text';
