@@ -101,7 +101,7 @@ The Intelligence Terminal provides AI-powered market analytics. Real-time whale 
 
 $FDP is the token that powers everything. Holders earn 40% of all protocol trading fees through staking, vote on governance decisions, get priority order routing, and access premium intelligence features.
 
-The presale is live now with 8 tiers. Tier 1 (Genesis) offers $FDP at $0.001 — a 98% discount from the $0.05 listing price. Earlier tiers get the best price but have longer vesting periods.
+The presale is live now with 20 tiers. Tier 1 (Genesis) offers $FDP at $0.0005 — a 98% discount from the $0.50 listing price. Earlier tiers get the best price but have longer vesting periods.
 
 Visit purchase.flowdexprotocol.com to participate.`,
     category: 'announcements',
@@ -272,7 +272,7 @@ const pageContent = {
     },
     tab_presale: {
       label: 'Presale Live',
-      description: '$FDP starts at $0.001 per token. Listing price $0.05. 8 tiers. Earlier you buy, bigger the discount.',
+      description: '$FDP starts at $0.0005 per token. Listing price $0.50. 20 tiers. Earlier you buy, bigger the discount.',
     },
     tab_exchange: {
       label: 'Universal Exchange',
