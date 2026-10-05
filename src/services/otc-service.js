@@ -80,13 +80,16 @@ async function processOtcDrip() {
         // Advance tier
         await pool.query('UPDATE tiers SET is_active = false, closed_at = NOW() WHERE id = $1', [tier.id]);
         const nextId = tier.id + 1;
-        if (nextId <= 8) {
+        // 20 seeded tiers (src/db/seed-tiers.js) — keep this in sync with the
+        // highest tier id there, or the presale silently stops advancing once
+        // the last tier fills and no tier is ever left active.
+        if (nextId <= 20) {
           await pool.query('UPDATE tiers SET is_active = true, opened_at = NOW() WHERE id = $1', [nextId]);
         }
         // Generate claims for closed tier
         await generateClaimsForTier(tier.id);
         await logAudit('tier_advanced', null, null, null, {tier:tier.id}, {tier:nextId}, 'OTC drip triggered tier advance', 'system');
-        await alertTierAdvanced(tier.id, nextId <= 8 ? nextId : null);
+        await alertTierAdvanced(tier.id, nextId <= 20 ? nextId : null);
       }
 
       // Check if drip complete

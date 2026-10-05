@@ -355,7 +355,10 @@ async function processPayment({ senderWallet, amount, currency, chain, txHash, t
       await pool.query('UPDATE tiers SET is_active = false, closed_at = NOW() WHERE id = $1', [tier.id]);
       const nextId = tier.id + 1;
       let advancedTo = null;
-      if (nextId <= 8) {
+      // 20 seeded tiers (src/db/seed-tiers.js) — keep this in sync with the
+      // highest tier id there, or the presale silently stops advancing once
+      // the last tier fills and no tier is ever left active.
+      if (nextId <= 20) {
         await pool.query('UPDATE tiers SET is_active = true, opened_at = NOW() WHERE id = $1', [nextId]);
         advancedTo = nextId;
       }

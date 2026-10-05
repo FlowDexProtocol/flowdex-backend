@@ -51,7 +51,7 @@ router.get('/current', async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
-// GET /api/tiers — all 8 tiers
+// GET /api/tiers — all 20 tiers
 router.get('/', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM tiers ORDER BY id');
