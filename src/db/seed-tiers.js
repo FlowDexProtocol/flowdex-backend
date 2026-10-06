@@ -2,7 +2,7 @@ require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env'
 const { Pool } = require('pg');
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-// 20 tiers, ~17.08% geometric price progression (whitepaper v8.0). `id` is
+// 20 tiers, ~17.08% geometric price progression (whitepaper v9.0). `id` is
 // the sort key everywhere tiers are queried (always `ORDER BY id` — there's
 // no separate sort_order column on the table), so it must match tier number.
 const tiers = [

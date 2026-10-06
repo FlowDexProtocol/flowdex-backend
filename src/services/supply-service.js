@@ -5,9 +5,9 @@
 
 const pool = require('../db/pool');
 
-const TOTAL_SUPPLY = 10000000000;                    // 10 billion
+const TOTAL_SUPPLY = 100000000000;                   // 100 billion
 const PRESALE_ALLOCATION_PCT = 22.5;                 // 22.5%
-const PRESALE_MAX_TOKENS = TOTAL_SUPPLY * PRESALE_ALLOCATION_PCT / 100;  // 2,250,000,000
+const PRESALE_MAX_TOKENS = TOTAL_SUPPLY * PRESALE_ALLOCATION_PCT / 100;  // 22,500,000,000
 
 async function getSupplyStatus() {
   // Tokens allocated through regular purchases

@@ -193,7 +193,7 @@ async function sendPurchaseConfirmation(purchase, tier) {
       : `${tier.tge_percentage}% unlocks at TGE, remainder vests linearly over ${tier.vest_months} months.`;
 
     const html = wrapEmail(
-      `Your purchase of ${fmtNum(purchase.tokens_allocated, 0)} $FDP is confirmed.`,
+      `Your purchase of ${fmtNum(purchase.tokens_allocated, 0)} FDP is confirmed.`,
       `
       <h2 style="margin:0 0 4px 0;color:#ffffff;font-size:18px;">Purchase Confirmed</h2>
       <p style="margin:0 0 20px 0;color:#8C9BB5;">Thank you for participating in the FlowDex Protocol presale.</p>
@@ -201,9 +201,9 @@ async function sendPurchaseConfirmation(purchase, tier) {
         ${statRow('Amount Paid', `${fmtNum(purchase.crypto_amount, 6)} ${purchase.crypto_currency}`)}
         ${statRow('USD Value', fmtUsd(purchase.usd_value))}
         ${statRow('Tier', purchase.tier_name)}
-        ${statRow('Tier Price', fmtUsd(purchase.tier_price) + ' / $FDP')}
-        ${statRow('Tokens Allocated', fmtNum(purchase.tokens_allocated, 2) + ' $FDP')}
-        ${bonusTokens > 0 ? statRow('Referral Bonus Tokens', '+' + fmtNum(bonusTokens, 2) + ' $FDP') : ''}
+        ${statRow('Tier Price', fmtUsd(purchase.tier_price) + ' / FDP')}
+        ${statRow('Tokens Allocated', fmtNum(purchase.tokens_allocated, 2) + ' FDP')}
+        ${bonusTokens > 0 ? statRow('Referral Bonus Tokens', '+' + fmtNum(bonusTokens, 2) + ' FDP') : ''}
         ${statRow('Transaction Hash', purchase.tx_hash.slice(0, 10) + '...' + purchase.tx_hash.slice(-8))}
       </table>
       ${link ? `<p style="margin:16px 0 0 0;"><a href="${link}" style="color:#627EEA;text-decoration:none;">View transaction on block explorer &rarr;</a></p>` : ''}
@@ -216,7 +216,7 @@ async function sendPurchaseConfirmation(purchase, tier) {
       `
     );
 
-    await sendEmail({ to, subject: 'Purchase Confirmed — ' + fmtNum(purchase.tokens_allocated, 0) + ' $FDP Allocated', html });
+    await sendEmail({ to, subject: 'Purchase Confirmed — ' + fmtNum(purchase.tokens_allocated, 0) + ' FDP Allocated', html });
   } catch (err) {
     console.error('[EMAIL] sendPurchaseConfirmation failed:', err.message);
   }
@@ -250,15 +250,15 @@ async function sendReferralNotification(referrerWallet, purchase) {
       <h2 style="margin:0 0 4px 0;color:#ffffff;font-size:18px;">Referral Bonus Earned</h2>
       <p style="margin:0 0 20px 0;color:#8C9BB5;">Someone you referred just completed a purchase of ${fmtUsd(purchase.usd_value)} in Tier ${purchase.tier_name}. Here's your 15% referral bonus:</p>
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-        ${statRow('Bonus Tokens', '+' + fmtNum(bonus.bonus_tokens, 2) + ' $FDP')}
+        ${statRow('Bonus Tokens', '+' + fmtNum(bonus.bonus_tokens, 2) + ' FDP')}
         ${statRow('Terminal Credits', fmtUsd(bonus.terminal_credits_usd))}
-        ${statRow('Tokens Burned (bonus funding)', fmtNum(bonus.tokens_burned, 2) + ' $FDP')}
+        ${statRow('Tokens Burned (bonus funding)', fmtNum(bonus.tokens_burned, 2) + ' FDP')}
       </table>
       ${ctaButton('View Your Referral Earnings', FRONTEND_URL + '/referrals?wallet=' + encodeURIComponent(referrerWallet))}
       `
     );
 
-    await sendEmail({ to, subject: 'You Earned a Referral Bonus — ' + fmtNum(bonus.bonus_tokens, 0) + ' $FDP', html });
+    await sendEmail({ to, subject: 'You Earned a Referral Bonus — ' + fmtNum(bonus.bonus_tokens, 0) + ' FDP', html });
   } catch (err) {
     console.error('[EMAIL] sendReferralNotification failed:', err.message);
   }
@@ -284,7 +284,7 @@ async function sendLargePurchaseAlert(purchase) {
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
         ${statRow('Wallet', purchase.buyer_wallet.slice(0, 8) + '...' + purchase.buyer_wallet.slice(-6))}
         ${statRow('USD Value', fmtUsd(purchase.usd_value))}
-        ${statRow('Tokens Allocated', fmtNum(purchase.tokens_allocated, 2) + ' $FDP')}
+        ${statRow('Tokens Allocated', fmtNum(purchase.tokens_allocated, 2) + ' FDP')}
         ${statRow('Tier', purchase.tier_name)}
         ${statRow('Currency', purchase.crypto_currency + ' (' + purchase.chain + ')')}
       </table>
@@ -338,7 +338,7 @@ async function sendDailyAdminDigest() {
     const currentTier = activeTierResult.rows[0]?.name || 'None active';
 
     const topRows = topPurchases.rows.map((p) =>
-      statRow(p.buyer_wallet.slice(0, 6) + '...' + p.buyer_wallet.slice(-4), fmtUsd(p.usd_value) + ' (' + fmtNum(p.tokens_allocated, 0) + ' $FDP)')
+      statRow(p.buyer_wallet.slice(0, 6) + '...' + p.buyer_wallet.slice(-4), fmtUsd(p.usd_value) + ' (' + fmtNum(p.tokens_allocated, 0) + ' FDP)')
     ).join('');
 
     const html = wrapEmail(

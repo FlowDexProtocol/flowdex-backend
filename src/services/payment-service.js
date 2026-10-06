@@ -285,7 +285,7 @@ async function processPayment({ senderWallet, amount, currency, chain, txHash, t
 
     await client.query(
       `INSERT INTO notifications (wallet, type, title, message) VALUES ($1, 'purchase_confirmed', 'Purchase Confirmed', $2)`,
-      [buyerWallet, 'Your purchase of ' + tokensAllocated.toFixed(0) + ' $FDP has been confirmed.']
+      [buyerWallet, 'Your purchase of ' + tokensAllocated.toFixed(0) + ' FDP has been confirmed.']
     );
 
     // ── STEP 7: REFERRAL BONUS ──
@@ -413,7 +413,7 @@ async function confirmPayment(purchaseId, actualCryptoAmount) {
     );
     await client.query(
       `INSERT INTO notifications (wallet, type, title, message) VALUES ($1, 'purchase_confirmed', 'Purchase Confirmed', $2)`,
-      [purchase.buyer_wallet, 'Your purchase of ' + parseFloat(purchase.tokens_allocated).toFixed(0) + ' $FDP has been confirmed.']
+      [purchase.buyer_wallet, 'Your purchase of ' + parseFloat(purchase.tokens_allocated).toFixed(0) + ' FDP has been confirmed.']
     );
 
     if (purchase.referred_by_code) {

@@ -65,7 +65,7 @@ async function alertLargePurchase(wallet, amount, tokens) {
   await sendAlert('Large Purchase Detected',
     'Wallet: ' + wallet.substring(0,8) + '...' + wallet.slice(-4) + '\n' +
     'Amount: $' + amount.toLocaleString() + '\n' +
-    'Tokens: ' + tokens.toLocaleString() + ' $FDP', 'info');
+    'Tokens: ' + tokens.toLocaleString() + ' FDP', 'info');
 }
 
 async function alertTierAdvanced(fromTier, toTier) {
@@ -82,7 +82,7 @@ async function alertLatePayment(usdValue, wallet, intentId) {
 
 async function alertOtcCancelled(tokensReturned, tierName) {
   await sendAlert('OTC Allocation Cancelled',
-    Number(tokensReturned).toLocaleString() + ' $FDP returned to the presale pool' +
+    Number(tokensReturned).toLocaleString() + ' FDP returned to the presale pool' +
     (tierName ? ' (Tier ' + tierName + ')' : '') + '.', 'warning');
 }
 

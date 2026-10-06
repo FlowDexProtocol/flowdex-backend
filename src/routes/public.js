@@ -19,8 +19,8 @@ router.get('/staking', (req, res) => {
     phase: 3,
     fee_share_pct: 40,
     token: 'FDP',
-    description: 'Stake FDP to earn 40% of protocol fees from every trade - crypto, stocks, forex, commodities, and more. Governance voting and routing priority included. In Phase 3, stakers become FlowChain validators.',
-    features: ['40% fee sharing', 'Governance voting', 'Routing priority', 'FlowChain validator (Phase 3)'],
+    description: 'Stake FDP to earn 40% of protocol fees from every trade - crypto, stocks, forex, commodities, and more. Governance voting and routing priority included. In Phase 4, stakers become FlowChain validators.',
+    features: ['40% fee sharing', 'Governance voting', 'Routing priority', 'FlowChain validator (Phase 4)'],
   });
 });
 

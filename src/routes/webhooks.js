@@ -144,7 +144,7 @@ router.post('/alchemy', async (req, res) => {
       });
 
       if (result.success) {
-        console.log('[WEBHOOK] Purchase #' + result.purchaseId + ': ' + (result.tokensAllocated ? result.tokensAllocated.toFixed(0) + ' $FDP' : 'needs pricing'));
+        console.log('[WEBHOOK] Purchase #' + result.purchaseId + ': ' + (result.tokensAllocated ? result.tokensAllocated.toFixed(0) + ' FDP' : 'needs pricing'));
       }
     }
 
@@ -187,7 +187,7 @@ router.post('/helius', async (req, res) => {
         });
 
         if (result.success) {
-          console.log('[WEBHOOK] Purchase #' + result.purchaseId + ': ' + (result.tokensAllocated ? result.tokensAllocated.toFixed(0) + ' $FDP' : 'needs pricing'));
+          console.log('[WEBHOOK] Purchase #' + result.purchaseId + ': ' + (result.tokensAllocated ? result.tokensAllocated.toFixed(0) + ' FDP' : 'needs pricing'));
         }
       }
 

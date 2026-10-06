@@ -21,7 +21,7 @@ const banners = [
     sort_order: 1,
   },
   {
-    title: 'Staking Launches in Phase 3',
+    title: 'Staking Launches in Phase 2',
     subtitle: 'Stake FDP to earn 40% of protocol fees from every trade — crypto, stocks, forex, and commodities.',
     cta_text: 'Learn More',
     cta_link: '/#staking',
@@ -41,7 +41,7 @@ const faqs = [
   {
     question: 'What is FDP used for?',
     answer:
-      'Holding and staking FDP unlocks trading fee discounts, a share of protocol fees once staking opens in Phase 3, governance voting rights, and priority order routing across the platform.',
+      'Holding and staking FDP unlocks trading fee discounts, a share of protocol fees once staking opens in Phase 2, governance voting rights, and priority order routing across the platform.',
     category: 'general',
     sort_order: 1,
   },
@@ -135,9 +135,9 @@ Need help? Contact support@flowdexprotocol.com`,
     excerpt: 'A deep dive into the FDP token distribution, vesting schedule, and deflationary burn mechanism.',
     content: `FDP has a fixed total supply of 100 billion tokens. No inflation, no additional minting.
 
-The supply is allocated across seven categories: Presale (22.5%), Liquidity (20%), Team and Advisors (15%, with 2-year vest and 6-month cliff), Ecosystem Fund (15%), Marketing (10%), Staking Rewards (10%), and Reserve (7.5%).
+The supply is allocated across ten categories: Presale (30%), Team (15%), Treasury/DAO (15%), Staking Rewards (12%), Ecosystem/Community (10%), Liquidity (6%), Airdrop (5%), Advisors (3%), Exchange Listings (2%), and Market Makers (2%).
 
-Each presale tier has its own vesting terms. Tier 1 (Genesis) at $0.001 gets 5% at TGE with a 12-month cliff and 24-month vest. Tier 8 (Launch) at $0.05 gets 100% at TGE with no cliff or vest. Earlier tiers get better prices but longer lockups. Later tiers cost more but tokens unlock faster.
+Each presale tier has its own vesting terms. Tier 1 (Genesis) at $0.0005 gets 5% at TGE with a 12-month cliff and 24-month vest. Tier 20 (Prestige) at $0.01 gets 100% at TGE with no cliff or vest. Earlier tiers get better prices but longer lockups. Later tiers cost more but tokens unlock faster.
 
 The referral program adds a deflationary mechanism. Every referral purchase burns bonus tokens permanently from the supply. When someone buys using a referral code, both the referrer and the buyer receive bonus tokens — and an equal amount of FDP is burned at full tier price. More referrals mean more burns and a shrinking supply.
 
@@ -170,7 +170,7 @@ const pageContent = {
     staking: {
       title: 'Stake FDP',
       description:
-        'Stake FDP to earn 40% of protocol fees from every trade - crypto, stocks, forex, commodities, and more. Governance voting and routing priority included. In Phase 3, stakers become FlowChain validators.',
+        'Stake FDP to earn 40% of protocol fees from every trade - crypto, stocks, forex, commodities, and more. Governance voting and routing priority included. In Phase 4, stakers become FlowChain validators.',
     },
   },
 
@@ -245,8 +245,8 @@ const pageContent = {
     ecosystem_3: {
       title: 'FlowChain — Layer 1 Blockchain',
       description:
-        'Our own Layer 1 blockchain launching in Phase 3. Purpose-built for high-frequency trading and cross-chain settlement. FDP holders become validators.',
-      tags: 'Layer 1,Validators,Phase 3',
+        'Our own Layer 1 blockchain launching in Phase 4. Purpose-built for high-frequency trading and cross-chain settlement. FDP holders become validators.',
+      tags: 'Layer 1,Validators,Phase 4',
       image_url: '',
     },
     ecosystem_4: {
@@ -309,7 +309,7 @@ const pageContent = {
     },
     utility_4: {
       title: 'Validator Staking',
-      description: 'In Phase 3, stake FDP to become a FlowChain validator. Secure the network and earn additional rewards.',
+      description: 'In Phase 4, stake FDP to become a FlowChain validator. Secure the network and earn additional rewards.',
     },
     utility_5: {
       title: 'Intelligence Access',

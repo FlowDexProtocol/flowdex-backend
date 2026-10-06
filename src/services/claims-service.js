@@ -57,7 +57,7 @@ async function generateClaimsForTier(tierId) {
       await client.query(
         `INSERT INTO notifications (wallet, type, title, message) VALUES ($1, 'claim_ready', $2, $3)`,
         [row.buyer_wallet, 'Tier ' + tierId + ' Has Closed',
-         'Your TGE claim is now available. You have ' + claimableTokens.toFixed(0) + ' $FDP ready to claim from Tier ' + tierId + '.']
+         'Your TGE claim is now available. You have ' + claimableTokens.toFixed(0) + ' FDP ready to claim from Tier ' + tierId + '.']
       );
 
       claimsCreated++;

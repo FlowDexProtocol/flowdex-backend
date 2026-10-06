@@ -6,10 +6,10 @@
 const pool = require('../db/pool');
 
 // Notification types:
-// purchase_confirmed — "Your purchase of 500,000 $FDP has been confirmed"
+// purchase_confirmed — "Your purchase of 500,000 FDP has been confirmed"
 // tier_closed — "Tier 1 has closed. Your TGE claim is now available."
-// claim_ready — "You have 25,000 $FDP ready to claim from Tier 1"
-// referral_bonus — "You earned 90,000 bonus $FDP + $210 Terminal Credits from a referral"
+// claim_ready — "You have 25,000 FDP ready to claim from Tier 1"
+// referral_bonus — "You earned 90,000 bonus FDP + $210 Terminal Credits from a referral"
 // tier_closing_soon — "Tier 1 is 90% full. Price increases when it closes."
 
 async function createNotification(wallet, type, title, message) {

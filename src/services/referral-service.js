@@ -132,7 +132,7 @@ async function processReferralBonus(client, purchase) {
   // ═══ NOTIFICATIONS ═══
   await client.query(
     `INSERT INTO notifications (wallet, type, title, message) VALUES ($1, 'referral_bonus', 'Referral Bonus Earned', $2)`,
-    [referrerWallet, 'You earned ' + referrerTokens.toFixed(0) + ' bonus $FDP + $' + referrerCreditsUsd.toFixed(2) + ' Terminal Credits from a referral purchase.']
+    [referrerWallet, 'You earned ' + referrerTokens.toFixed(0) + ' bonus FDP + $' + referrerCreditsUsd.toFixed(2) + ' Terminal Credits from a referral purchase.']
   );
 
   // ═══ AUDIT LOG ═══
