@@ -5,8 +5,8 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const banners = [
   {
     title: 'FlowDex Protocol Presale is Live',
-    subtitle: 'Get in early on $FDP before listing at the lowest price it will ever be.',
-    cta_text: 'Buy $FDP',
+    subtitle: 'Get in early on FDP before listing at the lowest price it will ever be.',
+    cta_text: 'Buy FDP',
     cta_link: '/#buy',
     bg_style: 'gradient',
     sort_order: 0,
@@ -14,7 +14,7 @@ const banners = [
   {
     title: 'Earn a 15% Referral Bonus',
     subtitle:
-      'Share your link — you earn 15% of what your friend spends, and they get a 30% bonus on their purchase. Both split 70% Terminal Credits + 30% $FDP.',
+      'Share your link — you earn 15% of what your friend spends, and they get a 30% bonus on their purchase. Both split 70% Terminal Credits + 30% FDP.',
     cta_text: 'Get Your Referral Link',
     cta_link: '/#referral',
     bg_style: 'gradient-purple',
@@ -22,7 +22,7 @@ const banners = [
   },
   {
     title: 'Staking Launches in Phase 3',
-    subtitle: 'Stake $FDP to earn 40% of protocol fees from every trade — crypto, stocks, forex, and commodities.',
+    subtitle: 'Stake FDP to earn 40% of protocol fees from every trade — crypto, stocks, forex, and commodities.',
     cta_text: 'Learn More',
     cta_link: '/#staking',
     bg_style: 'gradient-cyan',
@@ -34,14 +34,14 @@ const faqs = [
   {
     question: 'What is FlowDex Protocol?',
     answer:
-      'FlowDex Protocol unifies crypto, stocks, forex, and commodities into a single intelligent trading layer. $FDP is the token that powers the network — securing routing, governance, and fee-sharing across every market it supports.',
+      'FlowDex Protocol unifies crypto, stocks, forex, and commodities into a single intelligent trading layer. FDP is the token that powers the network — securing routing, governance, and fee-sharing across every market it supports.',
     category: 'general',
     sort_order: 0,
   },
   {
-    question: 'What is $FDP used for?',
+    question: 'What is FDP used for?',
     answer:
-      'Holding and staking $FDP unlocks trading fee discounts, a share of protocol fees once staking opens in Phase 3, governance voting rights, and priority order routing across the platform.',
+      'Holding and staking FDP unlocks trading fee discounts, a share of protocol fees once staking opens in Phase 3, governance voting rights, and priority order routing across the platform.',
     category: 'general',
     sort_order: 1,
   },
@@ -75,7 +75,7 @@ const faqs = [
   {
     question: 'How does the referral program work?',
     answer:
-      'Every wallet gets a unique referral code as soon as it connects. Share your link — when someone buys using your code, you earn 15% of what they spend and they get a 30% bonus on their own purchase. Both bonuses split 70% Terminal Credits and 30% $FDP tokens, tracked in your Referral dashboard.',
+      'Every wallet gets a unique referral code as soon as it connects. Share your link — when someone buys using your code, you earn 15% of what they spend and they get a 30% bonus on their own purchase. Both bonuses split 70% Terminal Credits and 30% FDP tokens, tracked in your Referral dashboard.',
     category: 'referral',
     sort_order: 0,
   },
@@ -93,25 +93,25 @@ const blogPosts = [
     title: 'Introducing FlowDex Protocol',
     slug: 'introducing-flowdex-protocol',
     excerpt: 'FlowDex Protocol unifies crypto, stocks, forex, and commodities into a single intelligent trading layer.',
-    content: `FlowDex Protocol is building a new kind of DeFi platform — one that combines a Universal Exchange with a Blockchain Intelligence Terminal, all powered by the $FDP token.
+    content: `FlowDex Protocol is building a new kind of DeFi platform — one that combines a Universal Exchange with a Blockchain Intelligence Terminal, all powered by the FDP token.
 
 The Universal Exchange lets you trade crypto, stocks, forex, and commodities from a single interface. Our cross-chain routing engine scans every DEX and liquidity pool to find the best price, so you never miss an opportunity.
 
 The Intelligence Terminal provides AI-powered market analytics. Real-time whale tracking, pattern detection, predictive signals, and smart alerts — all derived from live on-chain data.
 
-$FDP is the token that powers everything. Holders earn 40% of all protocol trading fees through staking, vote on governance decisions, get priority order routing, and access premium intelligence features.
+FDP is the token that powers everything. Holders earn 40% of all protocol trading fees through staking, vote on governance decisions, get priority order routing, and access premium intelligence features.
 
-The presale is live now with 20 tiers. Tier 1 (Genesis) offers $FDP at $0.0005 — a 98% discount from the $0.50 listing price. Earlier tiers get the best price but have longer vesting periods.
+The presale is live now with 20 tiers. Tier 1 (Genesis) offers FDP at $0.0005 — a 98% discount from the $0.50 listing price. Earlier tiers get the best price but have longer vesting periods.
 
 Visit purchase.flowdexprotocol.com to participate.`,
     category: 'announcements',
     author: 'FlowDex Team',
   },
   {
-    title: 'How to Buy $FDP — Step by Step',
+    title: 'How to Buy FDP — Step by Step',
     slug: 'how-to-buy-fdp-guide',
-    excerpt: 'A complete guide to buying $FDP tokens in the FlowDex presale. No experience needed.',
-    content: `Buying $FDP is straightforward. Here is everything you need to know.
+    excerpt: 'A complete guide to buying FDP tokens in the FlowDex presale. No experience needed.',
+    content: `Buying FDP is straightforward. Here is everything you need to know.
 
 Step 1: Get a Wallet. Download MetaMask (metamask.io) or Trust Wallet from your app store. Create a new wallet and save your recovery phrase somewhere safe.
 
@@ -121,27 +121,27 @@ Step 3: Visit the Buy Page. Go to purchase.flowdexprotocol.com and click Connect
 
 Step 4: Choose Payment. Select which crypto you want to pay with — ETH, USDT, USDC, BNB, SOL, or BTC. Enter the USD amount you want to spend.
 
-Step 5: Confirm and Send. Click Buy $FDP. You will receive a deposit address with a QR code and a 15-minute price lock. Send the exact amount shown to the address provided.
+Step 5: Confirm and Send. Click Buy FDP. You will receive a deposit address with a QR code and a 15-minute price lock. Send the exact amount shown to the address provided.
 
-Step 6: Check Your Portfolio. Once your payment is confirmed on the blockchain, your $FDP tokens are allocated automatically. Check the Portfolio tab to see your holdings and vesting schedule.
+Step 6: Check Your Portfolio. Once your payment is confirmed on the blockchain, your FDP tokens are allocated automatically. Check the Portfolio tab to see your holdings and vesting schedule.
 
 Need help? Contact support@flowdexprotocol.com`,
     category: 'updates',
     author: 'FlowDex Team',
   },
   {
-    title: 'Understanding $FDP Tokenomics',
+    title: 'Understanding FDP Tokenomics',
     slug: 'understanding-fdp-tokenomics',
-    excerpt: 'A deep dive into the $FDP token distribution, vesting schedule, and deflationary burn mechanism.',
-    content: `$FDP has a fixed total supply of 10 billion tokens. No inflation, no additional minting.
+    excerpt: 'A deep dive into the FDP token distribution, vesting schedule, and deflationary burn mechanism.',
+    content: `FDP has a fixed total supply of 100 billion tokens. No inflation, no additional minting.
 
 The supply is allocated across seven categories: Presale (22.5%), Liquidity (20%), Team and Advisors (15%, with 2-year vest and 6-month cliff), Ecosystem Fund (15%), Marketing (10%), Staking Rewards (10%), and Reserve (7.5%).
 
 Each presale tier has its own vesting terms. Tier 1 (Genesis) at $0.001 gets 5% at TGE with a 12-month cliff and 24-month vest. Tier 8 (Launch) at $0.05 gets 100% at TGE with no cliff or vest. Earlier tiers get better prices but longer lockups. Later tiers cost more but tokens unlock faster.
 
-The referral program adds a deflationary mechanism. Every referral purchase burns bonus tokens permanently from the supply. When someone buys using a referral code, both the referrer and the buyer receive bonus tokens — and an equal amount of $FDP is burned at full tier price. More referrals mean more burns and a shrinking supply.
+The referral program adds a deflationary mechanism. Every referral purchase burns bonus tokens permanently from the supply. When someone buys using a referral code, both the referrer and the buyer receive bonus tokens — and an equal amount of FDP is burned at full tier price. More referrals mean more burns and a shrinking supply.
 
-Terminal Credits, earned through referrals, are redeemable when the Blockchain Intelligence Terminal launches. Credits are split 70/30 — 70% Terminal Credits and 30% $FDP tokens.
+Terminal Credits, earned through referrals, are redeemable when the Blockchain Intelligence Terminal launches. Credits are split 70/30 — 70% Terminal Credits and 30% FDP tokens.
 
 View the full breakdown at flowdexprotocol.com/tokenomics`,
     category: 'research',
@@ -155,7 +155,7 @@ const pageContent = {
     hero: {
       title: 'Trade Everything. Know Everything.',
       subtitle:
-        'FlowDex Protocol unifies crypto, stocks, forex, and commodities into a single intelligent trading layer. $FDP powers the network.',
+        'FlowDex Protocol unifies crypto, stocks, forex, and commodities into a single intelligent trading layer. FDP powers the network.',
     },
     ecosystem: {
       title: 'One Protocol. Every Market.',
@@ -163,14 +163,14 @@ const pageContent = {
         'FlowDex routes orders across crypto, equities, forex, and commodities from a single account, giving traders one interface instead of a dozen disconnected platforms.',
     },
     utility: {
-      title: '$FDP Utility',
+      title: 'FDP Utility',
       description:
-        'Holding and staking $FDP unlocks trading fee discounts, a share of protocol fees, governance voting, and priority order routing.',
+        'Holding and staking FDP unlocks trading fee discounts, a share of protocol fees, governance voting, and priority order routing.',
     },
     staking: {
-      title: 'Stake $FDP',
+      title: 'Stake FDP',
       description:
-        'Stake $FDP to earn 40% of protocol fees from every trade - crypto, stocks, forex, commodities, and more. Governance voting and routing priority included. In Phase 3, stakers become FlowChain validators.',
+        'Stake FDP to earn 40% of protocol fees from every trade - crypto, stocks, forex, commodities, and more. Governance voting and routing priority included. In Phase 3, stakers become FlowChain validators.',
     },
   },
 
@@ -181,8 +181,8 @@ const pageContent = {
       headline_1: 'Trade Everything.',
       headline_2: 'Know Everything.',
       subtitle:
-        'FlowDex Protocol unifies crypto, stocks, forex, and commodities into a single intelligent trading layer. $FDP powers fee sharing, governance, and AI-driven market intelligence.',
-      cta_primary_text: 'Buy $FDP',
+        'FlowDex Protocol unifies crypto, stocks, forex, and commodities into a single intelligent trading layer. FDP powers fee sharing, governance, and AI-driven market intelligence.',
+      cta_primary_text: 'Buy FDP',
       cta_primary_link: 'https://purchase.flowdexprotocol.com',
       cta_secondary_text: 'Read Whitepaper',
       cta_secondary_link: '/whitepaper',
@@ -191,7 +191,7 @@ const pageContent = {
       trust_3: '6 Chains',
     },
     announcement: {
-      text: 'Tier 1 closing soon! Buy $FDP at $0.001 before the price increases.',
+      text: 'Tier 1 closing soon! Buy FDP at $0.001 before the price increases.',
       link: 'https://purchase.flowdexprotocol.com',
       active: 'true',
     },
@@ -208,7 +208,7 @@ const pageContent = {
       icon_5: '✉',
     },
     social_proof: {
-      text: 'Join early supporters buying $FDP',
+      text: 'Join early supporters buying FDP',
     },
     presale_card: {
       label: 'Stage 1: Genesis',
@@ -245,14 +245,14 @@ const pageContent = {
     ecosystem_3: {
       title: 'FlowChain — Layer 1 Blockchain',
       description:
-        'Our own Layer 1 blockchain launching in Phase 3. Purpose-built for high-frequency trading and cross-chain settlement. $FDP holders become validators.',
+        'Our own Layer 1 blockchain launching in Phase 3. Purpose-built for high-frequency trading and cross-chain settlement. FDP holders become validators.',
       tags: 'Layer 1,Validators,Phase 3',
       image_url: '',
     },
     ecosystem_4: {
       title: 'Staking & 40% Fee Sharing',
       description:
-        'Stake $FDP to earn 40% of all protocol trading fees. Every trade across every market generates revenue that flows to stakers. Governance voting included.',
+        'Stake FDP to earn 40% of all protocol trading fees. Every trade across every market generates revenue that flows to stakers. Governance voting included.',
       tags: '40% Fees,Governance,Passive Income',
       image_url: '',
     },
@@ -272,7 +272,7 @@ const pageContent = {
     },
     tab_presale: {
       label: 'Presale Live',
-      description: '$FDP starts at $0.0005 per token. Listing price $0.50. 20 tiers. Earlier you buy, bigger the discount.',
+      description: 'FDP starts at $0.0005 per token. Listing price $0.50. 20 tiers. Earlier you buy, bigger the discount.',
     },
     tab_exchange: {
       label: 'Universal Exchange',
@@ -284,20 +284,20 @@ const pageContent = {
     },
     tab_staking: {
       label: 'Staking & Fee Sharing',
-      description: 'Stake $FDP to earn 40% of all protocol trading fees. Every trade across every market generates revenue for stakers.',
+      description: 'Stake FDP to earn 40% of all protocol trading fees. Every trade across every market generates revenue for stakers.',
     },
     tab_flowchain: {
       label: 'FlowChain — Layer 1',
-      description: 'Our own Layer 1 blockchain. Built for high-speed trading and cross-chain settlement. $FDP holders become validators.',
+      description: 'Our own Layer 1 blockchain. Built for high-speed trading and cross-chain settlement. FDP holders become validators.',
     },
     utility: {
-      title: '$FDP Powers Everything',
+      title: 'FDP Powers Everything',
       subtitle: 'Five utilities. One token. Real value from day one.',
     },
     utility_1: {
       title: '40% Fee Sharing',
       description:
-        'Stake $FDP to earn 40% of all trading fees. Every trade across crypto, stocks, forex, and commodities generates revenue for stakers.',
+        'Stake FDP to earn 40% of all trading fees. Every trade across crypto, stocks, forex, and commodities generates revenue for stakers.',
     },
     utility_2: {
       title: 'Governance Voting',
@@ -305,11 +305,11 @@ const pageContent = {
     },
     utility_3: {
       title: 'Routing Priority',
-      description: '$FDP holders get priority order routing and reduced slippage on every trade. Better execution, every time.',
+      description: 'FDP holders get priority order routing and reduced slippage on every trade. Better execution, every time.',
     },
     utility_4: {
       title: 'Validator Staking',
-      description: 'In Phase 3, stake $FDP to become a FlowChain validator. Secure the network and earn additional rewards.',
+      description: 'In Phase 3, stake FDP to become a FlowChain validator. Secure the network and earn additional rewards.',
     },
     utility_5: {
       title: 'Intelligence Access',
@@ -319,10 +319,10 @@ const pageContent = {
     utility_6: {
       title: 'Deflationary Supply 🔥',
       description:
-        'Every referral purchase permanently burns $FDP from the supply. The more the community grows, the scarcer $FDP becomes.',
+        'Every referral purchase permanently burns FDP from the supply. The more the community grows, the scarcer FDP becomes.',
     },
     scenarios: {
-      title: 'What Could Your $FDP Be Worth?',
+      title: 'What Could Your FDP Be Worth?',
       subtitle: 'Based on a $500 investment at Genesis price. For illustration only.',
       disclaimer: 'These projections are illustrative only and are not a guarantee of future performance.',
     },
@@ -332,7 +332,7 @@ const pageContent = {
       step_1: 'Connect your wallet on the buy page to get your unique referral link',
       step_2: 'Share your link on social media, DMs, or anywhere',
       step_3: 'When someone buys using your link, you both earn bonuses',
-      step_4: 'You earn 15% of what your friend spends — split 70% Terminal Credits + 30% $FDP',
+      step_4: 'You earn 15% of what your friend spends — split 70% Terminal Credits + 30% FDP',
       step_5: 'Your friend earns 30% bonus on their purchase',
       burn_title: 'Deflationary by Design',
       burn_description:
@@ -341,7 +341,7 @@ const pageContent = {
     cta: {
       title: "Don't Miss the Lowest Price",
       subtitle: 'Tier 1 won\'t last forever. Every tier costs more.',
-      button_text: 'Buy $FDP Now',
+      button_text: 'Buy FDP Now',
       subscribe_placeholder: 'your@email.com',
     },
     vesting: {
@@ -349,7 +349,7 @@ const pageContent = {
       description: 'Each tier has different vesting terms. Earlier tiers have longer vesting but the lowest price.',
     },
     howto: {
-      title: 'How to Buy $FDP',
+      title: 'How to Buy FDP',
       subtitle: 'Four steps. No KYC. Under 5 minutes.',
     },
     howto_1: {
@@ -398,7 +398,7 @@ const pageContent = {
     },
     footer: {
       disclaimer:
-        'This is not financial advice. $FDP is a utility token. Cryptocurrency purchases carry risk, including total loss of funds.',
+        'This is not financial advice. FDP is a utility token. Cryptocurrency purchases carry risk, including total loss of funds.',
       copyright: '© 2026 FlowDex Protocol. All rights reserved.',
     },
     cookie: {
@@ -423,7 +423,7 @@ const pageContent = {
       link_6_url: '/faq',
       link_7_text: 'Blog',
       link_7_url: '/blogs',
-      buy_button_text: 'Buy $FDP',
+      buy_button_text: 'Buy FDP',
       buy_button_url: 'https://purchase.flowdexprotocol.com',
     },
   },
@@ -432,7 +432,7 @@ const pageContent = {
   tokenomics: {
     hero: {
       title: 'Tokenomics',
-      subtitle: '10,000,000,000 $FDP — fixed supply, no inflation',
+      subtitle: '100,000,000,000 FDP — fixed supply, no inflation',
     },
     distribution: {
       presale: '22.5',
@@ -479,10 +479,10 @@ const pageContent = {
       body: `TERMS OF SERVICE — Last Updated: September 2026
 
 1. ACCEPTANCE OF TERMS
-By accessing or using the FlowDex Protocol platform, purchasing $FDP tokens, or interacting with any FlowDex smart contracts, you agree to be bound by these Terms of Service.
+By accessing or using the FlowDex Protocol platform, purchasing FDP tokens, or interacting with any FlowDex smart contracts, you agree to be bound by these Terms of Service.
 
 2. TOKEN PURCHASE
-$FDP is a utility token. Purchasing $FDP does not constitute an investment in a security. $FDP tokens provide access to platform features including fee sharing, governance, routing priority, validator staking, and intelligence terminal access.
+FDP is a utility token. Purchasing FDP does not constitute an investment in a security. FDP tokens provide access to platform features including fee sharing, governance, routing priority, validator staking, and intelligence terminal access.
 
 3. ELIGIBILITY
 You must be at least 18 years old and legally able to enter into contracts in your jurisdiction. You are responsible for ensuring compliance with your local laws. FlowDex does not perform KYC verification.
@@ -545,16 +545,16 @@ We may update this policy at any time. Changes will be posted on this page.`,
     content: {
       body: `LEGAL NOTICE AND DISCLAIMER — Last Updated: September 2026
 
-IMPORTANT: Please read this notice carefully before using the FlowDex Protocol platform or purchasing $FDP tokens.
+IMPORTANT: Please read this notice carefully before using the FlowDex Protocol platform or purchasing FDP tokens.
 
 NOT FINANCIAL ADVICE
-Nothing on this website constitutes financial, investment, legal, or tax advice. $FDP is a utility token designed to provide access to FlowDex Protocol services. You should consult with qualified professionals before making any financial decisions.
+Nothing on this website constitutes financial, investment, legal, or tax advice. FDP is a utility token designed to provide access to FlowDex Protocol services. You should consult with qualified professionals before making any financial decisions.
 
 NO GUARANTEE OF VALUE
-$FDP tokens have no guaranteed value. Market cap scenarios shown on this website are illustrative only and do not constitute promises or predictions. The value of $FDP may decrease, and you may lose your entire purchase amount.
+FDP tokens have no guaranteed value. Market cap scenarios shown on this website are illustrative only and do not constitute promises or predictions. The value of FDP may decrease, and you may lose your entire purchase amount.
 
 REGULATORY STATUS
-$FDP is a utility token and is not intended to be a security in any jurisdiction. FlowDex Protocol does not offer securities. The regulatory status of cryptocurrency tokens varies by jurisdiction and is subject to change.
+FDP is a utility token and is not intended to be a security in any jurisdiction. FlowDex Protocol does not offer securities. The regulatory status of cryptocurrency tokens varies by jurisdiction and is subject to change.
 
 FORWARD-LOOKING STATEMENTS
 This website contains forward-looking statements about FlowDex Protocol development, features, and roadmap. These statements are based on current plans and expectations and may change. There is no guarantee that any planned feature will be developed or launched.
@@ -576,21 +576,66 @@ For legal inquiries, contact support@flowdexprotocol.com`,
       badge: 'Presale Live',
       headline_1: 'Trade Everything.',
       headline_2: 'Know Everything.',
+      subtitle: 'Get in early on FDP at the lowest price it will ever be.',
     },
     form: {
-      title: 'Buy $FDP',
+      title: 'Buy FDP',
       subtitle: 'Lock in your price for 15 minutes and receive a deposit address.',
       gas_warning_native: 'Note: Network gas fees of approximately $2-15 apply on top of this amount.',
       gas_warning_token: 'Note: A small network fee applies for token transfers.',
+      min_purchase: '10',
+      max_purchase: '50000',
+      price_lock_minutes: '15',
+    },
+    scenarios: {
+      title: 'Market Cap Scenarios',
+      subtitle: 'See what your FDP could be worth at different market cap levels.',
+      listing_price: '0.50',
+      total_supply: '100000000000',
+      disclaimer: 'These scenarios are illustrative only and do not constitute financial advice or guarantees of future value.',
     },
     vesting: {
       title: 'Your Vesting Schedule',
+      description: 'Tokens are released according to the vesting schedule for the tier you purchased. Earlier tiers have longer vesting periods but the lowest prices.',
     },
     referral: {
       title: 'Referral Code (optional)',
+      description: 'Enter a referral code to get a 30% bonus on your purchase. The referrer earns 15% of your spend.',
+      referrer_pct: '15',
+      buyer_bonus_pct: '30',
+      split_credits: '70',
+      split_tokens: '30',
+    },
+    tiers: {
+      title: 'Presale Tiers',
+      subtitle: '20 tiers from $0.0005 to $0.01 — the earlier you buy, the bigger the discount from the $0.50 listing price.',
+      total_tiers: '20',
+      tier_1_price: '0.0005',
+      tier_20_price: '0.01',
+    },
+    security: {
+      title: 'Security & Trust',
+      smart_contract_audit: 'Smart contracts audited by leading blockchain security firms.',
+      non_custodial: 'Non-custodial — your funds go directly to the project wallet. We never hold your private keys.',
+      transparent: 'All transactions verified on-chain. Real-time dashboard shows presale progress.',
+    },
+    how_it_works: {
+      title: 'How It Works',
+      step_1: 'Connect your wallet (MetaMask, WalletConnect, or any EVM wallet)',
+      step_2: 'Choose your amount and payment currency (ETH, USDT, USDC, BNB, SOL, BTC, TRX)',
+      step_3: 'Review your allocation and tier pricing',
+      step_4: 'Confirm and send — receive a deposit address with a 15-minute price lock',
+      step_5: 'Tokens are allocated automatically once your payment is confirmed on-chain',
+    },
+    disclaimer: {
+      risk_warning: 'FDP is a utility token, not a security or investment contract. Cryptocurrency purchases carry risk, including total loss of funds.',
+      no_guarantee: 'Presale tokens are subject to vesting and may not be immediately liquid. Nothing on this page is financial advice.',
+      jurisdiction: 'Access may be restricted in certain jurisdictions. You are responsible for compliance with local laws.',
     },
     support: {
       text: 'Need help? Contact support@flowdexprotocol.com',
+      email: 'support@flowdexprotocol.com',
+      telegram: 'https://t.me/flowdexprotocol',
     },
   },
 };
@@ -658,6 +703,13 @@ function inferFieldType(page, section, field) {
   if (page === 'global' && section === 'support' && field === 'telegram') return 'url';
   if (field === 'link' || field.endsWith('_url') || field.endsWith('_link')) return 'url'; // announcement.link, cta_*_link, link_N_url, buy_button_url
   if (page === 'tokenomics' && section === 'distribution') return 'number';
+  if (page === 'buy' && section === 'scenarios' && (field === 'listing_price' || field === 'total_supply')) return 'number';
+  if (page === 'buy' && section === 'scenarios' && field === 'disclaimer') return 'textarea';
+  if (page === 'buy' && section === 'disclaimer') return 'textarea';
+  if (page === 'buy' && section === 'referral' && field.endsWith('_pct')) return 'number';
+  if (page === 'buy' && section === 'form' && (field === 'min_purchase' || field === 'max_purchase' || field === 'price_lock_minutes')) return 'number';
+  if (page === 'buy' && section === 'tiers' && (field === 'total_tiers' || field.endsWith('_price'))) return 'number';
+  if (page === 'buy' && section === 'support' && field === 'telegram') return 'url';
   if ((page === 'terms' || page === 'privacy' || page === 'legal') && field === 'body') return 'textarea';
   return 'text';
 }

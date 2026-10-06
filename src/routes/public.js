@@ -18,8 +18,8 @@ router.get('/staking', (req, res) => {
     status: 'coming_soon',
     phase: 3,
     fee_share_pct: 40,
-    token: '$FDP',
-    description: 'Stake $FDP to earn 40% of protocol fees from every trade - crypto, stocks, forex, commodities, and more. Governance voting and routing priority included. In Phase 3, stakers become FlowChain validators.',
+    token: 'FDP',
+    description: 'Stake FDP to earn 40% of protocol fees from every trade - crypto, stocks, forex, commodities, and more. Governance voting and routing priority included. In Phase 3, stakers become FlowChain validators.',
     features: ['40% fee sharing', 'Governance voting', 'Routing priority', 'FlowChain validator (Phase 3)'],
   });
 });
@@ -59,18 +59,51 @@ router.get('/leaders', async (req, res) => {
 });
 
 // GET /api/public/scenarios — market cap scenario data
-router.get('/scenarios', (req, res) => {
-  res.json({
-    listing_price: 0.05,
-    total_supply: 10000000000,
-    scenarios: [
-      { label: 'Listing', multiplier: 1, price: 0.05, mcap: 500000000 },
-      { label: '5x', multiplier: 5, price: 0.25, mcap: 2500000000 },
-      { label: '10x', multiplier: 10, price: 0.50, mcap: 5000000000 },
-      { label: '50x', multiplier: 50, price: 2.50, mcap: 25000000000 },
-      { label: '100x', multiplier: 100, price: 5.00, mcap: 50000000000 },
-    ],
-  });
+// Reads listing_price and total_supply from the CMS buy page if available,
+// falling back to whitepaper v9.0 defaults. Scenario rows are computed
+// from whatever listing_price is active so the numbers always stay in sync.
+router.get('/scenarios', async (req, res) => {
+  try {
+    // Try to read CMS values (buy.scenarios.listing_price / total_supply)
+    const cmsResult = await pool.query(
+      "SELECT field, value FROM cms_pages WHERE page = 'buy' AND section = 'scenarios' AND field IN ('listing_price', 'total_supply')"
+    );
+    const cmsMap = {};
+    for (const row of cmsResult.rows) cmsMap[row.field] = row.value;
+
+    const listing_price = cmsMap.listing_price ? parseFloat(cmsMap.listing_price) : 0.50;
+    const total_supply = cmsMap.total_supply ? parseFloat(cmsMap.total_supply) : 100000000000;
+
+    const multipliers = [1, 5, 10, 50, 100];
+    const labels = ['Listing', '5x', '10x', '50x', '100x'];
+
+    res.json({
+      listing_price,
+      total_supply,
+      scenarios: multipliers.map((m, i) => ({
+        label: labels[i],
+        multiplier: m,
+        price: +(listing_price * m).toFixed(4),
+        mcap: Math.round(listing_price * m * total_supply),
+      })),
+    });
+  } catch (err) {
+    // If DB is unreachable, return hardcoded correct defaults
+    const listing_price = 0.50;
+    const total_supply = 100000000000;
+    const multipliers = [1, 5, 10, 50, 100];
+    const labels = ['Listing', '5x', '10x', '50x', '100x'];
+    res.json({
+      listing_price,
+      total_supply,
+      scenarios: multipliers.map((m, i) => ({
+        label: labels[i],
+        multiplier: m,
+        price: +(listing_price * m).toFixed(4),
+        mcap: Math.round(listing_price * m * total_supply),
+      })),
+    });
+  }
 });
 
 // GET /api/public/stats — public presale stats (no auth required)
