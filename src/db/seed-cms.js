@@ -61,14 +61,14 @@ const faqs = [
   {
     question: 'What is the token vesting schedule?',
     answer:
-      'Each presale tier has its own TGE unlock percentage, cliff period, and vesting length — earlier tiers generally vest over a longer period, later tiers unlock faster. The exact terms for the tier you buy into are shown on the buy page at the time of purchase.',
+      'Every presale tier has identical vesting terms: 10% of your tokens unlock at that tier’s TGE, and the remaining 90% vest monthly across the following 12 months. There is no cliff. Price is the only thing that differs between tiers. Because each tier’s vesting clock starts when that tier closes rather than at listing, earlier tiers finish unlocking earlier.',
     category: 'tokenomics',
     sort_order: 0,
   },
   {
     question: 'When can I claim my tokens?',
     answer:
-      'Claims open once a tier reaches Token Generation Event (TGE). Your TGE percentage unlocks immediately, with the remainder released according to that tier’s cliff and vesting schedule. You can check and claim available tokens any time from your dashboard.',
+      'Claims open once your tier reaches its Token Generation Event, which happens when that tier closes. 10% of your allocation unlocks immediately and the remaining 90% releases monthly across the following 12 months, with no cliff. You can check and claim available tokens any time from your dashboard.',
     category: 'tokenomics',
     sort_order: 1,
   },
@@ -137,7 +137,7 @@ Need help? Contact support@flowdexprotocol.com`,
 
 The supply is allocated across ten categories: Presale (30%), Team (15%), Treasury/DAO (15%), Staking Rewards (12%), Ecosystem/Community (10%), Liquidity (6%), Airdrop (5%), Advisors (3%), Exchange Listings (2%), and Market Makers (2%).
 
-Each presale tier has its own vesting terms. Tier 1 (Genesis) at $0.0005 gets 5% at TGE with a 12-month cliff and 24-month vest. Tier 20 (Prestige) at $0.01 gets 100% at TGE with no cliff or vest. Earlier tiers get better prices but longer lockups. Later tiers cost more but tokens unlock faster.
+Every presale tier carries identical vesting terms: 10% at that tier's TGE, then the remaining 90% vesting monthly over 12 months, with no cliff anywhere in the schedule. Price is the only variable between tiers, running from $0.0005 at Tier 1 (Genesis) to $0.01 at Tier 20 (Prestige). Earliness is rewarded through the per-tier TGE clock rather than through different terms: because a tier's vesting starts when that tier closes, Tier 1 buyers pay the lowest price and reach full unlock before any later tier.
 
 The referral program adds a deflationary mechanism. Every referral purchase burns bonus tokens permanently from the supply. When someone buys using a referral code, both the referrer and the buyer receive bonus tokens — and an equal amount of FDP is burned at full tier price. More referrals mean more burns and a shrinking supply.
 
