@@ -26,6 +26,7 @@ const { cleanupExpiredIntents } = require('./jobs/cleanup-intents');
 const { checkBtcPayments } = require('./jobs/btc-monitor');
 const { checkTronPayments } = require('./jobs/tron-monitor');
 const { checkBscPayments } = require('./jobs/bsc-monitor');
+const { checkSolanaPayments } = require('./jobs/solana-monitor');
 const { runReconciliation } = require('./jobs/reconciliation');
 const { takeBalanceSnapshot } = require('./jobs/balance-snapshot');
 const { aggregateDailyStats, aggregateWeeklyStats, aggregateMonthlyStats } = require('./jobs/stats-aggregator');
@@ -195,6 +196,13 @@ cron.schedule('*/30 * * * * *', guardOverlap('tronMonitor', checkTronPayments));
 // BSC monitor: every 30 seconds — fallback alongside the Alchemy webhook
 // (see routes/webhooks.js), same pattern as the TRON/BTC monitors above
 cron.schedule('*/30 * * * * *', guardOverlap('bscMonitor', checkBscPayments));
+
+// Solana monitor: every 60 seconds — fallback alongside the Helius webhook
+// (see routes/webhooks.js). Solana is the one chain the buy page offers that
+// had no detection at all until this was added, so the fallback matters more
+// here than elsewhere: a missed webhook meant a payment received and never
+// credited, with no record anywhere that it happened.
+cron.schedule('*/60 * * * * *', guardOverlap('solanaMonitor', checkSolanaPayments));
 
 // Reconciliation: every 6 hours
 cron.schedule('5 */6 * * *', guardOverlap('reconciliation', runReconciliation));

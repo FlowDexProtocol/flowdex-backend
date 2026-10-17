@@ -14,6 +14,8 @@ const { processPayment } = require('../services/payment-service');
 const { lookupToken, getNativeToken } = require('../config/token-registry');
 const { recordWebhookReceived } = require('../services/webhook-health');
 const { logAudit } = require('../services/audit-service');
+const { verifyEvm, verifySolana } = require('../services/chain-verify');
+const { sendAlert } = require('../services/alert-service');
 
 // 🔴 EVM_RECEIVING_ADDRESS from .env
 const EVM_ADDRESS = (process.env.EVM_RECEIVING_ADDRESS || '').toLowerCase();
@@ -38,6 +40,47 @@ const ALCHEMY_NETWORK_TO_CHAIN = {
 function normalizeChain(network) {
   if (!network) return 'ethereum';
   return ALCHEMY_NETWORK_TO_CHAIN[network.toUpperCase()] || network.toLowerCase();
+}
+
+// ═══ On-chain gate ═══
+// A webhook payload is a claim, not proof. Every inbound payment is
+// confirmed against the chain before it is credited, so a forged payload
+// fails even if the signing key is known — or, as was the case on the
+// Helius route, absent entirely.
+//
+// Three outcomes:
+//   verified          → credit it
+//   failOpen (API down) → credit it, but alert; reconciliation.js (6-hourly)
+//                         compares on-chain against the database and will
+//                         surface anything that should not have passed
+//   rejected          → do not credit; audit-log it and alert
+async function passesChainCheck(check, ctx) {
+  if (check.verified) return true;
+
+  if (check.failOpen) {
+    console.error('[WEBHOOK] ⚠️ Chain verification unavailable (' + check.reason + '): ' +
+      check.detail + ' — crediting on signature alone. tx=' + ctx.txHash);
+    await sendAlert('Chain Verification Unavailable',
+      'Could not confirm a payment on-chain; it was credited on the webhook signature alone.\n' +
+      'Reason: ' + check.reason + '\nDetail: ' + check.detail + '\n' +
+      'Chain: ' + ctx.chain + '\nTx: ' + ctx.txHash + '\nWallet: ' + ctx.wallet,
+      'warning');
+    return true;
+  }
+
+  console.warn('[WEBHOOK] 🚫 REJECTED unverified payment (' + check.reason + '): ' +
+    check.detail + ' tx=' + ctx.txHash);
+  await logAudit('payment_rejected_unverified', null, (ctx.wallet || '').toLowerCase(), ctx.txHash,
+    null, { reason: check.reason, detail: check.detail, chain: ctx.chain,
+            claimed_amount: ctx.amount, claimed_currency: ctx.currency },
+    'Webhook claimed a payment that does not match the chain', 'system');
+  await sendAlert('Forged Payment Blocked',
+    'A webhook claimed a payment that the chain does not confirm.\n' +
+    'Reason: ' + check.reason + '\nDetail: ' + check.detail + '\n' +
+    'Chain: ' + ctx.chain + '\nTx: ' + ctx.txHash + '\nWallet: ' + ctx.wallet + '\n' +
+    'Claimed: ' + ctx.amount + ' ' + ctx.currency,
+    'critical');
+  return false;
 }
 
 router.post('/alchemy', async (req, res) => {
@@ -129,7 +172,19 @@ router.post('/alchemy', async (req, res) => {
 
       if (!amount || amount <= 0) continue;
 
-      console.log('[WEBHOOK] ' + (isKnown ? '' : '⚠️ UNKNOWN TOKEN: ') + amount + ' ' + currency + ' from ' + senderWallet + ' (' + chain + ')');
+      // ── Confirm against the chain before crediting ──
+      const evmCheck = await verifyEvm({
+        txHash,
+        chain,
+        expectedTo: EVM_ADDRESS,
+        expectedFrom: senderWallet,
+        expectedAmount: amount,
+        contractAddress: contractAddress || null,
+        decimals,
+      });
+      if (!await passesChainCheck(evmCheck, { txHash, chain, wallet: senderWallet, amount, currency })) continue;
+
+      console.log('[WEBHOOK] ' + (isKnown ? '' : '⚠️ UNKNOWN TOKEN: ') + amount + ' ' + currency + ' from ' + senderWallet + ' (' + chain + ') — ' + evmCheck.detail);
 
       // Process the payment
       const result = await processPayment({
@@ -159,6 +214,20 @@ router.post('/alchemy', async (req, res) => {
 // ═══ POST /webhooks/helius — Solana payment detection ═══
 router.post('/helius', async (req, res) => {
   try {
+    // Helius signs nothing. Its only authentication is an Authorization
+    // header you configure on the webhook ("Auth Header" in the Helius
+    // dashboard) and it echoes back verbatim. Without this check the
+    // endpoint credits any well-formed POST from anyone who knows the URL.
+    const expectedAuth = process.env.HELIUS_AUTH_HEADER;
+    if (!expectedAuth) {
+      console.error('[WEBHOOK] HELIUS_AUTH_HEADER is not set — rejecting webhook. Configure it in .env and in the Helius dashboard.');
+      return res.status(401).json({ error: 'Webhook verification not configured' });
+    }
+    if (req.headers['authorization'] !== expectedAuth) {
+      console.warn('[WEBHOOK] Helius rejected: bad auth header — possible spoofing. IP: ' + (req.headers['x-forwarded-for'] || req.socket.remoteAddress));
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
     recordWebhookReceived();
 
     const events = Array.isArray(req.body) ? req.body : [req.body];
@@ -176,7 +245,15 @@ router.post('/helius', async (req, res) => {
         const amount = (transfer.amount || 0) / 1e9; // lamports to SOL
         if (amount <= 0) continue;
 
-        console.log('[WEBHOOK] ' + amount + ' SOL from ' + senderWallet);
+        const solCheck = await verifySolana({
+          txHash,
+          expectedTo: SOLANA_ADDRESS,
+          expectedFrom: senderWallet,
+          expectedAmount: amount,
+        });
+        if (!await passesChainCheck(solCheck, { txHash, chain: 'solana', wallet: senderWallet, amount, currency: 'SOL' })) continue;
+
+        console.log('[WEBHOOK] ' + amount + ' SOL from ' + senderWallet + ' — ' + solCheck.detail);
 
         const result = await processPayment({
           senderWallet,
@@ -199,6 +276,15 @@ router.post('/helius', async (req, res) => {
         const amount = parseFloat(t.tokenAmount) || 0;
         if (amount <= 0) continue;
         const currency = (t.mint === 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v') ? 'USDC' : (t.symbol || 'UNKNOWN');
+
+        const splCheck = await verifySolana({
+          txHash,
+          expectedTo: SOLANA_ADDRESS,
+          expectedFrom: senderWallet,
+          expectedAmount: amount,
+          mint: t.mint,
+        });
+        if (!await passesChainCheck(splCheck, { txHash, chain: 'solana', wallet: senderWallet, amount, currency })) continue;
 
         const result = await processPayment({
           senderWallet,
