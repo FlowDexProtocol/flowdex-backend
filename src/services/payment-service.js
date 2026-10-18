@@ -27,6 +27,7 @@ const { processReferralBonus } = require('./referral-service');
 const { generateClaimsForTier } = require('./claims-service');
 const { logAudit } = require('./audit-service');
 const { alertLargePurchase, alertTierNearlyFull, alertTierAdvanced, alertUnknownToken, alertSupplyLow, alertLatePayment } = require('./alert-service');
+const { announcePurchase } = require('./announce-service');
 const { sendPurchaseConfirmation, sendReferralNotification, sendLargePurchaseAlert } = require('./email-service');
 
 const TZ = process.env.TIMEZONE || 'Asia/Dubai';
@@ -326,6 +327,24 @@ async function processPayment({ senderWallet, amount, currency, chain, txHash, t
       await alertLargePurchase(buyerWallet, finalUsdValue, tokensAllocated);
     }
 
+    // ── Public channel announcement ──
+    // Deliberately after COMMIT and outside the transaction: the purchase is
+    // already durable, so a Telegram failure can never roll one back. The
+    // service no-ops unless PUBLIC_ANNOUNCE_ENABLED is 'true'.
+    try {
+      await announcePurchase({
+        wallet: buyerWallet,
+        cryptoAmount: amount,
+        currency,
+        usdValue: finalUsdValue,
+        tokens: tokensAllocated,
+        tierName: tier.name,
+        tierPrice: finalPrice,
+      });
+    } catch (err) {
+      console.error('[ANNOUNCE] Purchase announcement failed:', err.message);
+    }
+
     // ── Post-commit emails — never allowed to affect the purchase result ──
     try {
       await sendPurchaseConfirmation(purchase, tier);
@@ -439,6 +458,25 @@ async function confirmPayment(purchaseId, actualCryptoAmount) {
       }
     } catch (emailErr) {
       console.error('[EMAIL] Post-purchase email dispatch failed:', emailErr.message);
+    }
+
+    // ── Public channel announcement ──
+    // An admin-priced purchase credits tokens exactly like an automatic one,
+    // so it belongs in the channel too. Separate try block from the emails so
+    // a mail failure does not swallow the announcement, or the reverse.
+    try {
+      const tierRow = await pool.query('SELECT * FROM tiers WHERE id = $1', [purchase.tier_at_purchase]);
+      await announcePurchase({
+        wallet: purchase.buyer_wallet,
+        cryptoAmount: actualCryptoAmount ?? purchase.crypto_amount,
+        currency: purchase.crypto_currency,
+        usdValue: purchase.usd_value,
+        tokens: purchase.tokens_allocated,
+        tierName: tierRow.rows[0]?.name,
+        tierPrice: purchase.price_at_purchase,
+      });
+    } catch (err) {
+      console.error('[ANNOUNCE] Purchase announcement failed:', err.message);
     }
 
     return { success: true, purchaseId };

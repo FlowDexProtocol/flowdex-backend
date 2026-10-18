@@ -18,7 +18,7 @@ const pool = require('./db/pool');
 // ── Services (cron targets) ──
 // Note: price-service is not on this list — prices are fetched on-demand by
 // GET /api/price/:crypto and purchase intents, not on a background cron.
-const { processOtcDrip } = require('./services/otc-service');
+const { processOtcDrip, activateScheduledOtc } = require('./services/otc-service');
 const { checkWebhookHealthAndAlert, resetDailyCounter } = require('./services/webhook-health');
 
 // ── Jobs ──
@@ -183,6 +183,11 @@ function guardOverlap(key, fn) {
 
 // OTC drip: every 5 minutes
 cron.schedule('*/5 * * * *', () => processOtcDrip());
+
+// Scheduled OTC activation: every minute. Finer-grained than the drip
+// itself because an admin who schedules a drip for 09:00 expects it to
+// start at 09:00, not up to five minutes later.
+cron.schedule('* * * * *', guardOverlap('otcActivate', activateScheduledOtc));
 
 // Cleanup expired intents: every 5 minutes
 cron.schedule('*/5 * * * *', () => cleanupExpiredIntents());

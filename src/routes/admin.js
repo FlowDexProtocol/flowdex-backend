@@ -18,6 +18,7 @@ const { verify2FA, generate2FASetup, generateTotpSecret } = require('../middlewa
 const { loginRateLimit, recordFailedLogin, recordSuccessfulLogin } = require('../middleware/admin-login-rate-limit');
 const { logAudit } = require('../services/audit-service');
 const { createOtcAllocation, processOtcDrip } = require('../services/otc-service');
+const { announcePurchase } = require('../services/announce-service');
 const { alertOtcCancelled } = require('../services/alert-service');
 const { getSupplyStatus } = require('../services/supply-service');
 const { scanForMissedPayments } = require('../services/payment-recovery');
@@ -1124,7 +1125,7 @@ router.get('/stats/geo-map', adminAuth, async (req, res) => {
 
 router.post('/otc/allocate', adminAuth, requireRole('super_admin'), async (req, res) => {
   try {
-    const { investor_name, investor_wallet, amount_usd, payment_reference, notes } = req.body;
+    const { investor_name, investor_wallet, amount_usd, payment_reference, notes, scheduled_start_time } = req.body;
     if (!investor_name || !investor_wallet) {
       return res.status(400).json({ success: false, error: 'investor_name and investor_wallet are required' });
     }
@@ -1132,8 +1133,42 @@ router.post('/otc/allocate', adminAuth, requireRole('super_admin'), async (req, 
       return res.status(400).json({ success: false, error: 'Amount must be greater than $0' });
     }
 
-    const result = await createOtcAllocation(investor_name, investor_wallet.toLowerCase(), parseFloat(amount_usd), payment_reference, notes);
-    res.json({ success: true, allocation_id: result.id, tokens: result.tokens, drip_ends_at: result.drip_ends_at });
+    // scheduled_start_time is optional; omitting it starts the drip now,
+    // which is how this endpoint has always behaved. When supplied it is
+    // validated here rather than in the service, so a typo comes back as a
+    // 400 the admin can see instead of silently starting a deal early.
+    if (scheduled_start_time) {
+      const when = new Date(scheduled_start_time);
+      if (isNaN(when.getTime())) {
+        return res.status(400).json({ success: false, error: 'scheduled_start_time is not a valid date' });
+      }
+      if (when.getTime() <= Date.now()) {
+        return res.status(400).json({ success: false, error: 'scheduled_start_time must be in the future' });
+      }
+      // A year-out start date is far more likely to be a mistyped year than
+      // a real plan, and an allocation that silently waits months is hard to
+      // notice. 90 days is generous for any genuine OTC schedule.
+      if (when.getTime() > Date.now() + 90 * 24 * 60 * 60 * 1000) {
+        return res.status(400).json({ success: false, error: 'scheduled_start_time cannot be more than 90 days ahead' });
+      }
+    }
+
+    const result = await createOtcAllocation(
+      investor_name, investor_wallet.toLowerCase(), parseFloat(amount_usd),
+      payment_reference, notes, scheduled_start_time || null
+    );
+    await logAudit('otc_allocate', null, investor_wallet.toLowerCase(), null, null,
+      { amount_usd: parseFloat(amount_usd), scheduled_start_time: scheduled_start_time || null },
+      result.scheduled ? 'OTC allocation scheduled by admin' : 'OTC allocation created by admin',
+      req.admin.username, req.ip);
+    res.json({
+      success: true,
+      allocation_id: result.id,
+      tokens: result.tokens,
+      scheduled: result.scheduled,
+      drip_starts_at: result.drip_starts_at,
+      drip_ends_at: result.drip_ends_at,
+    });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
@@ -1176,11 +1211,36 @@ router.get('/otc/history', adminAuth, requireRole('super_admin'), async (req, re
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
+// Pauses a drip that is running, or holds a scheduled one before it starts.
+//
+// This used to answer { success: true } whatever happened, because the UPDATE
+// was never checked. An admin pausing an allocation that was not 'active'
+// changed nothing and was told it worked — harmless while 'active' was the
+// only state, dangerous now that a scheduled allocation can fire later. The
+// row count decides the answer.
 router.post('/otc/pause/:id', adminAuth, requireRole('super_admin'), async (req, res) => {
   try {
-    await pool.query("UPDATE otc_allocations SET drip_status = 'paused' WHERE id = $1 AND drip_status = 'active'", [req.params.id]);
-    await logAudit('otc_paused', null, null, null, { status: 'active' }, { status: 'paused' }, 'OTC drip paused by admin', req.admin.username, req.ip);
-    res.json({ success: true });
+    const current = await pool.query('SELECT drip_status FROM otc_allocations WHERE id = $1', [req.params.id]);
+    if (current.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'OTC allocation not found' });
+    }
+    const was = current.rows[0].drip_status;
+
+    const result = await pool.query(
+      "UPDATE otc_allocations SET drip_status = 'paused' WHERE id = $1 AND drip_status IN ('active', 'scheduled')",
+      [req.params.id]
+    );
+    if (result.rowCount === 0) {
+      return res.status(400).json({
+        success: false,
+        error: `Cannot pause an allocation whose drip status is '${was}'`,
+      });
+    }
+
+    await logAudit('otc_paused', null, null, null, { drip_status: was }, { drip_status: 'paused' },
+      was === 'scheduled' ? 'Scheduled OTC allocation held before start' : 'OTC drip paused by admin',
+      req.admin.username, req.ip);
+    res.json({ success: true, was_scheduled: was === 'scheduled' });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
@@ -1192,17 +1252,32 @@ router.post('/otc/resume/:id', adminAuth, requireRole('super_admin'), async (req
     if (alloc.rows.length === 0) return res.status(404).json({ success: false, error: 'Not found' });
     const a = alloc.rows[0];
 
+    if (a.drip_status !== 'paused') {
+      return res.status(400).json({
+        success: false,
+        error: `Cannot resume an allocation whose drip status is '${a.drip_status}'`,
+      });
+    }
+
     const originalTotalMs = new Date(a.drip_end_time).getTime() - new Date(a.drip_start_time).getTime();
     const releasedFraction = parseFloat(a.drip_released_usd) / parseFloat(a.daily_amount_usd);
+
+    // Back-dating the start by the released fraction is what makes a partly
+    // drained drip release only its remainder over the remaining time. An
+    // allocation paused before it ever started has released nothing, so that
+    // fraction is 0 and this correctly becomes a plain start-now.
     const newStart = new Date(Date.now() - releasedFraction * originalTotalMs);
     const newEnd = new Date(newStart.getTime() + originalTotalMs);
 
     await pool.query(
-      "UPDATE otc_allocations SET drip_status = 'active', drip_start_time = $1, drip_end_time = $2 WHERE id = $3",
+      "UPDATE otc_allocations SET drip_status = 'active', drip_start_time = $1, drip_end_time = $2, scheduled_start_time = NULL WHERE id = $3",
       [newStart, newEnd, req.params.id]
     );
-    await logAudit('otc_resumed', null, null, null, { status: 'paused' }, { status: 'active' }, 'OTC drip resumed by admin', req.admin.username, req.ip);
-    res.json({ success: true });
+    await logAudit('otc_resumed', null, null, null,
+      { drip_status: 'paused', released_fraction: releasedFraction },
+      { drip_status: 'active', started_at: newStart.toISOString() },
+      'OTC drip resumed by admin', req.admin.username, req.ip);
+    res.json({ success: true, drip_ends_at: newEnd });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
@@ -1250,6 +1325,26 @@ router.post('/otc/:id/record-payment', adminAuth, requireRole('super_admin'), as
       `UPDATE otc_allocations SET paid_amount = $1, paid_tokens = $2, status = $3 WHERE id = $4 RETURNING *`,
       [newPaidAmount, newPaidTokens, newStatus, id]
     );
+
+    // ── Public channel announcement ──
+    // Announced here rather than at allocation, because an allocation is
+    // only paperwork: paid_amount starts at zero and the money may arrive
+    // days later, or never. Announcing at allocation would publish demand
+    // that does not exist yet. This fires on money actually received, which
+    // is the same bar an on-chain purchase has to clear, and the message is
+    // identical to one — nothing marks it as OTC.
+    try {
+      const tierRow = await pool.query('SELECT * FROM tiers WHERE id = $1', [alloc.tier_at_allocation]);
+      await announcePurchase({
+        wallet: alloc.investor_wallet,
+        usdValue: amount,
+        tokens: tokensForPayment,
+        tierName: tierRow.rows[0]?.name,
+        tierPrice,
+      });
+    } catch (err) {
+      console.error('[ANNOUNCE] OTC payment announcement failed:', err.message);
+    }
 
     await logAudit(
       'otc_payment_recorded', null, alloc.investor_wallet, tx_hash || null,
