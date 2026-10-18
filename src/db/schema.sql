@@ -358,9 +358,15 @@ CREATE TABLE IF NOT EXISTS otc_allocations (
   -- separate from total_tokens_allocated (which is shrunk in place by
   -- each cancellation to reflect the deal's current real size) so "how
   -- much has been returned in total" stays queryable after the fact.
-  tokens_returned DECIMAL(36,8) NOT NULL DEFAULT 0
+  tokens_returned DECIMAL(36,8) NOT NULL DEFAULT 0,
+  -- When set, the drip does not begin at creation: the row sits in
+  -- drip_status 'scheduled' until activateScheduledOtc() reaches this time.
+  -- NULL means start immediately, which is how every pre-scheduling row
+  -- behaves and how the form behaves when the field is left empty.
+  scheduled_start_time TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_otc_payment_status ON otc_allocations(status);
+CREATE INDEX IF NOT EXISTS idx_otc_scheduled ON otc_allocations (scheduled_start_time) WHERE drip_status = 'scheduled';
 CREATE INDEX IF NOT EXISTS idx_otc_wallet ON otc_allocations(investor_wallet);
 CREATE INDEX IF NOT EXISTS idx_otc_status ON otc_allocations(drip_status);
 
