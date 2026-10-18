@@ -54,13 +54,108 @@ async function createOtcAllocation(investorName, investorWallet, amountUsd, paym
   // Announced once, at the agreed size. The drip releases this in small
   // increments every few minutes, so announcing per increment would post
   // hundreds of messages for one deal.
+  const allocationId = result.rows[0].id;
+
+  // Not scheduled means start now, and "start" is now the whole thing: the
+  // money is already in, so the allocation is released, settled and announced
+  // in one step rather than trickling out over 24 hours.
+  if (!isScheduled) {
+    await releaseAllocationInFull(
+      {
+        id: allocationId,
+        investor_wallet: investorWallet,
+        total_allocated_usd: amountUsd,
+        total_tokens_allocated: tokens,
+        tier_price: tierPrice,
+      },
+      tier
+    );
+  }
+
   return {
-    id: result.rows[0].id,
+    id: allocationId,
     tokens,
     drip_starts_at: startTime,
     drip_ends_at: endTime,
     scheduled: isScheduled,
   };
+}
+
+// ══════════════════════════════════════════════════
+// releaseAllocationInFull — completes an OTC allocation in one step.
+//
+// An allocation is only ever created once the money is already in hand, so
+// there is nothing to wait for: the tokens are credited to the tier, the
+// allocation is marked paid, and the purchase is announced, all at once.
+//
+// This replaces the 24-hour drip for new allocations. processOtcDrip() is
+// left in place for any allocation already mid-drip, but nothing new enters
+// that path: every allocation created or activated from here lands as
+// drip_status 'completed'.
+//
+// Tier advancement is handled here for the same reason it was handled in the
+// drip: a large allocation can fill the active tier, and if nothing closes it
+// the presale silently keeps selling at the old price.
+// ══════════════════════════════════════════════════
+async function releaseAllocationInFull(alloc, tier) {
+  const usd = parseFloat(alloc.total_allocated_usd);
+  const tokens = parseFloat(alloc.total_tokens_allocated);
+  const tierPrice = parseFloat(alloc.tier_price);
+
+  await pool.query('UPDATE tiers SET total_raised_usd = total_raised_usd + $1 WHERE id = $2', [usd, tier.id]);
+
+  await pool.query(
+    `INSERT INTO otc_drip_log (otc_allocation_id, amount_usd, tokens, tier_at_drip, tier_price, cumulative_released)
+     VALUES ($1,$2,$3,$4,$5,$2)`,
+    [alloc.id, usd, tokens, tier.id, tierPrice]
+  );
+
+  await pool.query(
+    `UPDATE otc_allocations
+     SET drip_released_usd = $1, drip_status = 'completed',
+         paid_amount = $1, paid_tokens = $2, status = 'completed'
+     WHERE id = $3`,
+    [usd, tokens, alloc.id]
+  );
+
+  await logAudit('otc_payment_recorded', null, alloc.investor_wallet, null,
+    { paid_amount: 0, paid_tokens: 0, status: 'allocated' },
+    { paid_amount: usd, paid_tokens: tokens, status: 'completed', tier: tier.id },
+    'OTC allocation released in full', 'system');
+
+  console.log('[OTC] Released allocation #' + alloc.id + ' in full: $' + usd +
+    ' / ' + Math.round(tokens).toLocaleString() + ' FDP (tier ' + tier.id + ')');
+
+  // ── Tier advance ──
+  const updated = await pool.query('SELECT * FROM tiers WHERE id = $1', [tier.id]);
+  const row = updated.rows[0];
+  if (row && parseFloat(row.total_raised_usd) >= parseFloat(row.hard_cap_usd)) {
+    await pool.query('UPDATE tiers SET is_active = false, closed_at = NOW() WHERE id = $1', [tier.id]);
+    const nextId = tier.id + 1;
+    // 20 seeded tiers (src/db/seed-tiers.js) — keep in sync, or the presale
+    // stops advancing once the last tier fills and no tier is left active.
+    if (nextId <= 20) {
+      await pool.query('UPDATE tiers SET is_active = true, opened_at = NOW() WHERE id = $1', [nextId]);
+    }
+    await generateClaimsForTier(tier.id);
+    await logAudit('tier_advanced', null, null, null, { tier: tier.id }, { tier: nextId },
+      'OTC allocation filled the tier', 'system');
+    await alertTierAdvanced(tier.id, nextId <= 20 ? nextId : null);
+  }
+
+  // ── Public announcement ──
+  // Same format as an on-chain purchase; nothing marks it as OTC.
+  try {
+    await announcePurchase({
+      wallet: alloc.investor_wallet,
+      usdValue: usd,
+      tokens,
+      tierName: tier.name,
+      tierPrice,
+    });
+  } catch (err) {
+    console.error('[ANNOUNCE] OTC announcement failed:', err.message);
+  }
 }
 
 async function processOtcDrip() {
@@ -238,53 +333,26 @@ async function activateScheduledOtc() {
           'warning');
       }
 
-      // ── Settle the payment ──
-      //
-      // An OTC allocation is only ever created once the money is already in
-      // hand; scheduling exists to space deals apart in time, not to wait on
-      // payment. So activation is the moment the deal is complete, and
-      // requiring an admin to click "record payment" afterwards would just be
-      // a second manual step recording something that already happened.
-      //
-      // Priced off the post-re-pricing figures, so a deal that moved tier
-      // settles at the tier it actually bought into.
-      const settledUsd = parseFloat(alloc.total_allocated_usd);
-      const settledTokens = parseFloat(alloc.total_tokens_allocated);
+      // The scheduled moment has arrived, so the deal completes now: full
+      // amount to the tier, marked paid, announced. Nothing is left for an
+      // admin to click.
+      const releaseTier = activeTier
+        || (await pool.query('SELECT * FROM tiers WHERE id = $1', [alloc.tier_at_allocation])).rows[0];
 
-      await pool.query(
-        `UPDATE otc_allocations
-         SET paid_amount = $1, paid_tokens = $2, status = 'completed'
-         WHERE id = $3`,
-        [settledUsd, settledTokens, alloc.id]
-      );
-
-      await logAudit('otc_payment_recorded', null, alloc.investor_wallet, null,
-        { paid_amount: 0, paid_tokens: 0, status: 'allocated' },
-        { paid_amount: settledUsd, paid_tokens: settledTokens, status: 'completed' },
-        'Settled automatically on scheduled activation', 'system');
-
-      console.log('[OTC] Activated scheduled allocation #' + alloc.id +
-        ' ($' + settledUsd + ', ' + alloc.investor_name + ') — settled automatically');
-
-      // ── Public channel announcement ──
-      // Announced here rather than at creation, because this is the point at
-      // which the deal is live and settled. Identical format to an on-chain
-      // purchase; nothing marks it as OTC.
-      try {
-        await announcePurchase({
-          wallet: alloc.investor_wallet,
-          usdValue: settledUsd,
-          tokens: settledTokens,
-          tierName: activeTier ? activeTier.name : null,
-          tierPrice: alloc.tier_price,
-        });
-      } catch (err) {
-        console.error('[ANNOUNCE] OTC activation announcement failed:', err.message);
+      if (!releaseTier) {
+        console.error('[OTC] Allocation #' + alloc.id + ' activated but no tier available to release against.');
+        await sendAlert('OTC Activation Stalled',
+          'Allocation #' + alloc.id + ' (' + alloc.investor_name + ') activated, but there is no tier to credit it to. ' +
+          'It is marked active and unreleased, and needs manual attention.',
+          'critical');
+        continue;
       }
+
+      await releaseAllocationInFull(alloc, releaseTier);
     }
   } catch (err) {
     console.error('[OTC] Scheduled activation failed:', err.message);
   }
 }
 
-module.exports = { createOtcAllocation, processOtcDrip, activateScheduledOtc };
+module.exports = { createOtcAllocation, processOtcDrip, activateScheduledOtc, releaseAllocationInFull };

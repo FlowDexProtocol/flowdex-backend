@@ -20,10 +20,17 @@ const axios = require('axios');
 // answers 403 and nothing is published.
 const BOT_TOKEN = process.env.ALERT_TELEGRAM_BOT_TOKEN;
 
-// Either the public @username (e.g. "@flowdexprotocol") or the numeric id
-// (e.g. "-1001234567890"). The numeric form keeps working if the channel is
-// ever renamed, so prefer it once you have it.
-const CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID;
+// Where announcements go. Either may be set, or both: the channel is the
+// broadcast feed, the group is where people talk. A purchase posted to both
+// appears once in each.
+//
+// Each is a public @username (e.g. "@flowdexprotocol") or a numeric id
+// (e.g. "-1001234567890"). The numeric form survives a rename, so prefer it
+// once you have it. For a group, the bot must be a member with permission
+// to post; for a channel, an administrator with Post Messages.
+function destinations() {
+  return [process.env.TELEGRAM_CHANNEL_ID, process.env.TELEGRAM_GROUP_ID].filter(Boolean);
+}
 
 // Off unless explicitly enabled, so merely deploying this cannot start
 // posting to a public channel by accident.
@@ -34,7 +41,7 @@ const ENABLED = process.env.PUBLIC_ANNOUNCE_ENABLED === 'true';
 const MIN_USD = parseFloat(process.env.PUBLIC_ANNOUNCE_MIN_USD || '25');
 
 function configured() {
-  return ENABLED && !!BOT_TOKEN && !!CHANNEL_ID;
+  return ENABLED && !!BOT_TOKEN && destinations().length > 0;
 }
 
 // Shows enough of an address to be recognisable to its owner and verifiable
@@ -94,7 +101,7 @@ async function reportFailure(status, detail) {
 
   let hint = '';
   if (status === 403) hint = 'The bot is probably not an administrator of the channel, or lacks Post Messages.';
-  else if (status === 400) hint = 'TELEGRAM_CHANNEL_ID is probably wrong.';
+  else if (status === 400) hint = 'The chat id is probably wrong (TELEGRAM_CHANNEL_ID / TELEGRAM_GROUP_ID).';
   else if (status === 429) hint = 'Rate limited by Telegram despite queueing.';
 
   try {
@@ -112,19 +119,26 @@ async function reportFailure(status, detail) {
 }
 
 async function send(text) {
-  try {
-    await axios.post(
-      'https://api.telegram.org/bot' + BOT_TOKEN + '/sendMessage',
-      {
-        chat_id: CHANNEL_ID,
-        text,
-        parse_mode: 'HTML',
-        disable_web_page_preview: true,
-      },
-      { timeout: 8000 }
-    );
-  } catch (err) {
-    await reportFailure(err.response?.status, err.response?.data?.description || err.message);
+  // Each destination is attempted independently: a group the bot was removed
+  // from must not stop the channel post going out.
+  for (const chatId of destinations()) {
+    try {
+      await axios.post(
+        'https://api.telegram.org/bot' + BOT_TOKEN + '/sendMessage',
+        {
+          chat_id: chatId,
+          text,
+          parse_mode: 'HTML',
+          disable_web_page_preview: true,
+        },
+        { timeout: 8000 }
+      );
+    } catch (err) {
+      await reportFailure(
+        err.response?.status,
+        chatId + ': ' + (err.response?.data?.description || err.message)
+      );
+    }
   }
 }
 
