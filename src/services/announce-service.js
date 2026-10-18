@@ -32,16 +32,20 @@ function destinations() {
   return [process.env.TELEGRAM_CHANNEL_ID, process.env.TELEGRAM_GROUP_ID].filter(Boolean);
 }
 
-// Off unless explicitly enabled, so merely deploying this cannot start
-// posting to a public channel by accident.
-const ENABLED = process.env.PUBLIC_ANNOUNCE_ENABLED === 'true';
+// Announcements are on whenever a destination is configured. There is no
+// separate on/off flag: the presence of TELEGRAM_CHANNEL_ID (or
+// TELEGRAM_GROUP_ID) IS the switch, and one fewer variable is one fewer
+// thing to be set wrong.
+//
+// To silence announcements, remove the destination variables. To send
+// somewhere else, change them.
 
 // Dust filter. A presale attracts $1 test transactions, and a channel full
 // of them reads worse than an empty one.
 const MIN_USD = parseFloat(process.env.PUBLIC_ANNOUNCE_MIN_USD || '25');
 
 function configured() {
-  return ENABLED && !!BOT_TOKEN && destinations().length > 0;
+  return !!BOT_TOKEN && destinations().length > 0;
 }
 
 // Shows enough of an address to be recognisable to its owner and verifiable
