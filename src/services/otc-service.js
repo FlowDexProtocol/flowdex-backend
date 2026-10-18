@@ -7,6 +7,7 @@ const pool = require('../db/pool');
 const { logAudit } = require('./audit-service');
 const { generateClaimsForTier } = require('./claims-service');
 const { alertTierAdvanced, sendAlert } = require('./alert-service');
+const { announcePurchase } = require('./announce-service');
 const dayjs = require('dayjs');
 const utc = require('dayjs/plugin/utc');
 const tz = require('dayjs/plugin/timezone');
@@ -237,9 +238,49 @@ async function activateScheduledOtc() {
           'warning');
       }
 
-      console.log('[OTC] Activated scheduled allocation #' + alloc.id +
-        ' ($' + alloc.total_allocated_usd + ', ' + alloc.investor_name + ')');
+      // ── Settle the payment ──
+      //
+      // An OTC allocation is only ever created once the money is already in
+      // hand; scheduling exists to space deals apart in time, not to wait on
+      // payment. So activation is the moment the deal is complete, and
+      // requiring an admin to click "record payment" afterwards would just be
+      // a second manual step recording something that already happened.
+      //
+      // Priced off the post-re-pricing figures, so a deal that moved tier
+      // settles at the tier it actually bought into.
+      const settledUsd = parseFloat(alloc.total_allocated_usd);
+      const settledTokens = parseFloat(alloc.total_tokens_allocated);
 
+      await pool.query(
+        `UPDATE otc_allocations
+         SET paid_amount = $1, paid_tokens = $2, status = 'completed'
+         WHERE id = $3`,
+        [settledUsd, settledTokens, alloc.id]
+      );
+
+      await logAudit('otc_payment_recorded', null, alloc.investor_wallet, null,
+        { paid_amount: 0, paid_tokens: 0, status: 'allocated' },
+        { paid_amount: settledUsd, paid_tokens: settledTokens, status: 'completed' },
+        'Settled automatically on scheduled activation', 'system');
+
+      console.log('[OTC] Activated scheduled allocation #' + alloc.id +
+        ' ($' + settledUsd + ', ' + alloc.investor_name + ') — settled automatically');
+
+      // ── Public channel announcement ──
+      // Announced here rather than at creation, because this is the point at
+      // which the deal is live and settled. Identical format to an on-chain
+      // purchase; nothing marks it as OTC.
+      try {
+        await announcePurchase({
+          wallet: alloc.investor_wallet,
+          usdValue: settledUsd,
+          tokens: settledTokens,
+          tierName: activeTier ? activeTier.name : null,
+          tierPrice: alloc.tier_price,
+        });
+      } catch (err) {
+        console.error('[ANNOUNCE] OTC activation announcement failed:', err.message);
+      }
     }
   } catch (err) {
     console.error('[OTC] Scheduled activation failed:', err.message);
