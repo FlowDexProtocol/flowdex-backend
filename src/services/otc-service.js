@@ -152,6 +152,11 @@ async function releaseAllocationInFull(alloc, tier) {
       tokens,
       tierName: tier.name,
       tierPrice,
+      // Present on imported payments, absent on allocations created through
+      // the single-allocation form, which records a USD figure only.
+      currency: alloc.payment_currency || undefined,
+      cryptoAmount: alloc.payment_crypto_amount || undefined,
+      receivedAt: alloc.received_at || undefined,
     });
   } catch (err) {
     console.error('[ANNOUNCE] OTC announcement failed:', err.message);

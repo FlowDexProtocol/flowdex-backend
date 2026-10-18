@@ -19,6 +19,7 @@ const { loginRateLimit, recordFailedLogin, recordSuccessfulLogin } = require('..
 const { logAudit } = require('../services/audit-service');
 const { createOtcAllocation, processOtcDrip } = require('../services/otc-service');
 const { announcePurchase } = require('../services/announce-service');
+const otcImport = require('../services/otc-import-service');
 const { alertOtcCancelled } = require('../services/alert-service');
 const { getSupplyStatus } = require('../services/supply-service');
 const { scanForMissedPayments } = require('../services/payment-recovery');
@@ -1170,6 +1171,107 @@ router.post('/otc/allocate', adminAuth, requireRole('super_admin'), async (req, 
       drip_ends_at: result.drip_ends_at,
     });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// ══════════════════════════════════════════════════
+// OTC bulk import
+//
+// The CSV is held in memory rather than written to disk: it carries buyer
+// names, wallets and amounts, and there is no reason for it to outlive the
+// request.
+// ══════════════════════════════════════════════════
+const csvUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ok = /\.csv$/i.test(file.originalname) ||
+      ['text/csv', 'application/vnd.ms-excel', 'text/plain'].includes(file.mimetype);
+    cb(ok ? null : new Error('Only .csv files are accepted'), ok);
+  },
+});
+
+// POST /admin/otc/import/preview — multipart with a "file" field.
+// Validates and reports. Writes nothing.
+router.post('/otc/import/preview', adminAuth, requireRole('super_admin'), (req, res) => {
+  csvUpload.single('file')(req, res, async (err) => {
+    if (err) return res.status(400).json({ success: false, error: err.message });
+    if (!req.file) return res.status(400).json({ success: false, error: 'No file uploaded' });
+    try {
+      const result = await otcImport.preview(req.file.buffer.toString('utf8'));
+      if (!result.ok) return res.status(400).json({ success: false, error: result.error });
+      res.json({ success: true, ...result, filename: req.file.originalname });
+    } catch (e) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+});
+
+// POST /admin/otc/import/commit — same file again, this time written.
+//
+// The file is re-sent rather than a preview token redeemed: it keeps the
+// server stateless between the two calls, and commit re-validates from the
+// file anyway, so there is nothing a stale token could smuggle through.
+router.post('/otc/import/commit', adminAuth, requireRole('super_admin'), (req, res) => {
+  csvUpload.single('file')(req, res, async (err) => {
+    if (err) return res.status(400).json({ success: false, error: err.message });
+    if (!req.file) return res.status(400).json({ success: false, error: 'No file uploaded' });
+    try {
+      const result = await otcImport.commit(req.file.buffer.toString('utf8'), {
+        filename: req.file.originalname,
+        adminUsername: req.admin.username,
+        ip: req.ip,
+      });
+      if (!result.ok) return res.status(400).json({ success: false, error: result.error });
+      res.json({ success: true, ...result });
+    } catch (e) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+});
+
+// GET /admin/otc/import/batches — import history
+router.get('/otc/import/batches', adminAuth, requireRole('super_admin'), async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT b.*,
+              (SELECT COUNT(*)::int FROM otc_allocations a WHERE a.import_batch_id = b.id) AS live_allocations
+       FROM otc_import_batches b
+       ORDER BY b.created_at DESC
+       LIMIT 100`
+    );
+    res.json(result.rows);
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// POST /admin/otc/import/batches/:id/revert
+router.post('/otc/import/batches/:id/revert', adminAuth, requireRole('super_admin'), async (req, res) => {
+  try {
+    const result = await otcImport.revert(parseInt(req.params.id, 10), {
+      adminUsername: req.admin.username,
+      ip: req.ip,
+    });
+    if (!result.ok) return res.status(400).json({ success: false, error: result.error });
+    res.json({ success: true, ...result });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// GET /admin/otc/import/template — a CSV the admin can fill in
+router.get('/otc/import/template', adminAuth, requireRole('super_admin'), (req, res) => {
+  const header = [...otcImport.REQUIRED, ...otcImport.OPTIONAL].join(',');
+  const example = [
+    'Acme Capital',
+    '0x0000000000000000000000000000000000000000',
+    '30000',
+    'ETH',
+    new Date(Date.now() - 3600000).toISOString(),
+    '8.42',
+    'First tranche',
+  ];
+  // Column order must follow the header, which is REQUIRED then OPTIONAL.
+  const ordered = [example[0], example[1], example[2], example[3], example[4], example[5], example[6]];
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="otc-import-template.csv"');
+  res.send(header + '\n' + ordered.join(',') + '\n');
 });
 
 router.get('/otc/today', adminAuth, requireRole('super_admin'), async (req, res) => {

@@ -81,11 +81,13 @@ function formatTokens(value) {
 // busy hour would drop exactly the announcements worth seeing.
 const SEND_INTERVAL_MS = 3500;
 
-// Bounded so a sustained surge cannot grow the queue without limit. Past
-// this, the oldest waiting messages are dropped: in a flood the newest
-// purchases are the ones people care about, and the database remains the
-// record of what actually happened either way.
-const MAX_QUEUE = 40;
+// Bounded so a sustained surge cannot grow the queue without limit. Sized
+// to survive a full bulk import (500 rows) rather than a handful: dropping
+// most of a legitimate batch was the old behaviour and it lost exactly the
+// messages worth sending. At one message every 3.5s a full batch takes
+// about 30 minutes to drain, which reads as a steady feed rather than a
+// wall of posts.
+const MAX_QUEUE = 600;
 
 const queue = [];
 let draining = false;
@@ -182,7 +184,7 @@ function post(text) {
 // Omit cryptoAmount/currency for a purchase settled in fiat; the line then
 // reads in dollars rather than naming a coin that was never sent.
 // ───────────────────────────────────────────────
-async function announcePurchase({ wallet, cryptoAmount, currency, usdValue, tokens, tierName, tierPrice }) {
+async function announcePurchase({ wallet, cryptoAmount, currency, usdValue, tokens, tierName, tierPrice, receivedAt }) {
   if (!configured()) return;
   if ((Number(usdValue) || 0) < MIN_USD) return;
 
@@ -191,12 +193,27 @@ async function announcePurchase({ wallet, cryptoAmount, currency, usdValue, toke
       (usdValue ? ' (' + formatUsd(usdValue) + ')' : '')
     : '<b>' + formatUsd(usdValue) + '</b>';
 
+  // A payment entered hours or days after it arrived should not read as
+  // having just happened. When the receipt date is not today, the message
+  // says when it was, so the post is a record rather than an implied
+  // "moments ago".
+  const when = receivedAt ? new Date(receivedAt) : null;
+  const isToday = when && !isNaN(when.getTime())
+    && when.toDateString() === new Date().toDateString();
+
   const lines = [
     '🟢 <b>New purchase</b>',
     '',
     '<code>' + shortWallet(wallet) + '</code> bought ' + paidIn,
     formatTokens(tokens) + ' FDP',
   ];
+
+  if (when && !isNaN(when.getTime()) && !isToday) {
+    lines.push('');
+    lines.push('Received ' + when.toLocaleDateString('en-GB', {
+      day: 'numeric', month: 'short', year: 'numeric',
+    }));
+  }
 
   if (tierName) {
     lines.push('');
