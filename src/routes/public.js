@@ -31,16 +31,34 @@ router.get('/leaders', async (req, res) => {
     if (!Number.isFinite(limit) || limit <= 0) limit = 10;
     limit = Math.min(limit, 50);
 
+    // Buyers are ranked across both routes into the presale. An OTC buyer
+    // paid the same money for the same tokens as someone who sent ETH, and
+    // leaving them off the board made the public picture wrong.
+    //
+    // OTC is read from otc_allocations rather than mirrored into purchases
+    // on purpose: generateClaimsForTier() already reads otc_allocations
+    // separately, so a purchases row for the same allocation would generate
+    // a second claim and hand that wallet its tokens twice at TGE.
+    //
+    // paid_amount/paid_tokens rather than the allocated figures, so only
+    // money actually received is ranked, and cancelled allocations drop out.
     const result = await pool.query(
-      `SELECT p.buyer_wallet,
-              SUM(p.usd_value) AS total_usd,
-              SUM(p.tokens_allocated) AS total_tokens,
+      `SELECT x.wallet AS buyer_wallet,
+              SUM(x.usd) AS total_usd,
+              SUM(x.tokens) AS total_tokens,
               COUNT(*) AS purchase_count,
               b.tag AS buyer_tag
-       FROM purchases p
-       LEFT JOIN buyers b ON b.buyer_wallet = p.buyer_wallet
-       WHERE p.status = 'confirmed'
-       GROUP BY p.buyer_wallet, b.tag
+       FROM (
+         SELECT p.buyer_wallet AS wallet, p.usd_value AS usd, p.tokens_allocated AS tokens
+         FROM purchases p
+         WHERE p.status = 'confirmed'
+         UNION ALL
+         SELECT o.investor_wallet AS wallet, o.paid_amount AS usd, o.paid_tokens AS tokens
+         FROM otc_allocations o
+         WHERE o.status IN ('completed', 'partial') AND o.paid_amount > 0
+       ) x
+       LEFT JOIN buyers b ON b.buyer_wallet = x.wallet
+       GROUP BY x.wallet, b.tag
        ORDER BY total_usd DESC
        LIMIT $1`,
       [limit]
