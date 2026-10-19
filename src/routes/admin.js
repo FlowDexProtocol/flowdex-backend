@@ -1258,17 +1258,23 @@ router.post('/otc/import/batches/:id/revert', adminAuth, requireRole('super_admi
 // GET /admin/otc/import/template — a CSV the admin can fill in
 router.get('/otc/import/template', adminAuth, requireRole('super_admin'), (req, res) => {
   const header = [...otcImport.REQUIRED, ...otcImport.OPTIONAL].join(',');
-  const example = [
+  // Column order must follow the header, which is REQUIRED then OPTIONAL:
+  // investor_name, investor_wallet, usd_amount, payment_currency, release_at,
+  // crypto_amount, received_at, notes.
+  //
+  // release_at is shown a day out so the example is valid as downloaded —
+  // a past release_at is refused, and a template that fails its own
+  // validation teaches the wrong lesson.
+  const ordered = [
     'Acme Capital',
     '0x0000000000000000000000000000000000000000',
     '30000',
     'ETH',
-    new Date(Date.now() - 3600000).toISOString(),
+    new Date(Date.now() + 24 * 3600000).toISOString(),
     '8.42',
+    new Date(Date.now() - 3600000).toISOString(),
     'First tranche',
   ];
-  // Column order must follow the header, which is REQUIRED then OPTIONAL.
-  const ordered = [example[0], example[1], example[2], example[3], example[4], example[5], example[6]];
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', 'attachment; filename="otc-import-template.csv"');
   res.send(header + '\n' + ordered.join(',') + '\n');

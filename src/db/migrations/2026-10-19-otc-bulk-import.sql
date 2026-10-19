@@ -3,10 +3,17 @@
 --
 -- Bulk import of OTC payments.
 --
--- Each imported row is one payment that actually arrived: the buyer, the
--- coin they sent, how much of it, its USD value, and when it landed. The
--- payment is credited and announced on import, so received_at is a record
--- of fact rather than a schedule.
+-- Each imported row is one investor's allocation: the buyer, the coin they
+-- paid in, how much of it, its USD value, and when the allocation should
+-- happen.
+--
+-- Nothing is credited at import. Each row is written with drip_status
+-- 'scheduled' and a scheduled_start_time, and the existing once-a-minute
+-- activateScheduledOtc() sweep releases and announces it when due. The
+-- scheduled_start_time column itself comes from the 2026-10-18 migration.
+--
+-- received_at stays nullable: when the money arrived is optional private
+-- bookkeeping, never shown publicly and never announced.
 --
 -- row_fingerprint is what stops a re-uploaded file doubling the raise. It
 -- is a hash of the fields that identify a payment, and it is UNIQUE, so a

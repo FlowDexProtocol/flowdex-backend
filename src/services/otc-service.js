@@ -156,7 +156,10 @@ async function releaseAllocationInFull(alloc, tier) {
       // the single-allocation form, which records a USD figure only.
       currency: alloc.payment_currency || undefined,
       cryptoAmount: alloc.payment_crypto_amount || undefined,
-      receivedAt: alloc.received_at || undefined,
+      // receivedAt is deliberately not passed. When the investor paid is a
+      // private matter between them and us; the channel is told at the
+      // moment the allocation happens, which is now, so the post reads in
+      // the present tense with no payment date attached.
     });
   } catch (err) {
     console.error('[ANNOUNCE] OTC announcement failed:', err.message);
