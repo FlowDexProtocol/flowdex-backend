@@ -139,9 +139,21 @@ router.get('/stats', async (req, res) => {
       total_raised_usd: parseFloat(raised.rows[0].t),
       total_buyers: await countBuyers(),
       total_wallets_connected: await countWalletsConnected(),
+      // Rebuilt field by field rather than spread: the raw tier row carries
+      // hard_cap_usd, and spreading it put the cap into a public response.
       current_tier: activeTier.rows[0]
         ? {
-            ...activeTier.rows[0],
+            id: activeTier.rows[0].id,
+            name: activeTier.rows[0].name,
+            price: parseFloat(activeTier.rows[0].price),
+            total_raised_usd: parseFloat(activeTier.rows[0].total_raised_usd),
+            is_active: activeTier.rows[0].is_active,
+            claims_open: activeTier.rows[0].claims_open,
+            tge_percentage: parseFloat(activeTier.rows[0].tge_percentage),
+            cliff_months: activeTier.rows[0].cliff_months,
+            vest_months: activeTier.rows[0].vest_months,
+            opened_at: activeTier.rows[0].opened_at,
+            closed_at: activeTier.rows[0].closed_at,
             tokens_remaining: Math.max(
               (parseFloat(activeTier.rows[0].hard_cap_usd) - parseFloat(activeTier.rows[0].total_raised_usd))
                 / parseFloat(activeTier.rows[0].price),

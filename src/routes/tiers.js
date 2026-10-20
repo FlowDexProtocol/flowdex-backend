@@ -51,9 +51,14 @@ router.get('/current', async (req, res) => {
       name: tier.name,
       price: displayPrice,
       total_raised_usd: displayRaised,
-      hard_cap_usd: parseFloat(tier.hard_cap_usd),
+      // hard_cap_usd and progress_pct are deliberately NOT returned.
+      //
+      // Either one gives the tier cap away: the percentage divides straight
+      // into the raised figure, and the cap was the field itself. Removing
+      // them from the UI while still sending them meant anyone could read
+      // the cap out of the network tab. tokens_remaining conveys the
+      // scarcity without the denominator.
       tokens_remaining: tokensRemaining,
-      progress_pct: Math.min(progressPct, 100).toFixed(2),
       tge_percentage: parseFloat(tier.tge_percentage),
       cliff_months: tier.cliff_months,
       vest_months: tier.vest_months,
@@ -71,11 +76,24 @@ router.get('/', async (req, res) => {
     const result = await pool.query('SELECT * FROM tiers ORDER BY id');
     // tokens_remaining alongside each tier, so a list can show what is left
     // without each caller repeating the arithmetic differently.
+    // Same reasoning as /current: the cap does not leave the server. Each
+    // row is rebuilt field by field rather than spread, so a column added to
+    // the tiers table later cannot leak through this endpoint by default.
     const rows = result.rows.map((t) => ({
-      ...t,
+      id: t.id,
+      name: t.name,
+      price: parseFloat(t.price),
+      total_raised_usd: parseFloat(t.total_raised_usd),
       tokens_remaining: Math.max(
         (parseFloat(t.hard_cap_usd) - parseFloat(t.total_raised_usd)) / parseFloat(t.price), 0
       ),
+      is_active: t.is_active,
+      claims_open: t.claims_open,
+      tge_percentage: parseFloat(t.tge_percentage),
+      cliff_months: t.cliff_months,
+      vest_months: t.vest_months,
+      opened_at: t.opened_at,
+      closed_at: t.closed_at,
     }));
     res.json(rows);
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
