@@ -82,6 +82,20 @@ async function main() {
   // Columns the database has but schema.sql does not describe. Usually a
   // migration that was applied but never folded back into schema.sql, which
   // means a fresh install would not get it.
+  //
+  // The table-level case was the blind spot that let otc_import_batches live
+  // in production while schema.sql had never heard of it: the loop above only
+  // walks tables schema.sql already knows, so a whole table created by a
+  // migration and never folded back was invisible here. It is checked first
+  // now, because a missing table is worse than a missing column — anything
+  // referencing it fails outright on a fresh install.
+  let undocumentedTables = 0;
+  for (const table of Object.keys(actual)) {
+    if (expected[table]) continue;
+    console.log('NOT IN schema.sql  ' + table + '  (whole table)');
+    undocumentedTables++;
+  }
+
   let undocumented = 0;
   for (const [table, cols] of Object.entries(actual)) {
     if (!expected[table]) continue;
@@ -95,6 +109,9 @@ async function main() {
   console.log('\n' + (missingTables + missingColumns === 0
     ? 'No missing tables or columns.'
     : missingTables + ' missing table(s), ' + missingColumns + ' missing column(s).'));
+  if (undocumentedTables) {
+    console.log(undocumentedTables + ' live table(s) absent from schema.sql — a fresh install would not create these.');
+  }
   if (undocumented) {
     console.log(undocumented + ' live column(s) absent from schema.sql — a fresh install would not create these.');
   }

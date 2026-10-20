@@ -345,6 +345,24 @@ CREATE TABLE IF NOT EXISTS withdrawals (
 );
 
 -- ── Table 18: otc_allocations ──
+-- ── otc_import_batches ──
+-- One row per committed CSV import. Reached production through the
+-- 2026-10-19 migration and was missing from this file entirely, which meant
+-- a fresh install would fail on otc_allocations' foreign key below. Must stay
+-- declared BEFORE otc_allocations for that reference to resolve.
+CREATE TABLE IF NOT EXISTS otc_import_batches (
+  id SERIAL PRIMARY KEY,
+  filename VARCHAR(255),
+  uploaded_by VARCHAR(100) NOT NULL,
+  row_count INTEGER NOT NULL DEFAULT 0,
+  total_usd DECIMAL(18,2) NOT NULL DEFAULT 0,
+  -- 'committed' | 'reverted'
+  status VARCHAR(20) NOT NULL DEFAULT 'committed',
+  reverted_at TIMESTAMPTZ,
+  reverted_by VARCHAR(100),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS otc_allocations (
   id SERIAL PRIMARY KEY,
   investor_name VARCHAR(255) NOT NULL,
@@ -370,6 +388,25 @@ CREATE TABLE IF NOT EXISTS otc_allocations (
   -- tracks whether the token drip itself is 'active'/'paused'/'completed'.
   -- processOtcDrip() additionally skips any row with status='cancelled'.
   status VARCHAR(20) NOT NULL DEFAULT 'allocated',
+
+  -- ── Bulk CSV import (2026-10-19 / 2026-10-20 migrations) ──
+  -- These reached production through migrations and were missing here, so a
+  -- fresh install would have built an otc_allocations the importer could not
+  -- write to. Kept in step with the migrations deliberately: CREATE TABLE IF
+  -- NOT EXISTS never adds a column to a table that already exists, so this
+  -- file only describes new installs and the drift checker is what proves
+  -- the two agree.
+  --
+  -- payment_currency / payment_crypto_amount are what the buyer paid in, used
+  -- for the channel announcement. received_at is optional private
+  -- bookkeeping and is never announced. row_fingerprint is the uniqueness
+  -- key that stops a re-uploaded file crediting the same payment twice.
+  payment_currency VARCHAR(20),
+  payment_crypto_amount DECIMAL(36,18),
+  received_at TIMESTAMPTZ,
+  import_batch_id INTEGER REFERENCES otc_import_batches(id),
+  row_fingerprint VARCHAR(64),
+
   cancelled_at TIMESTAMPTZ,
   cancelled_by INTEGER,
   cancel_reason TEXT,
@@ -386,6 +423,15 @@ CREATE TABLE IF NOT EXISTS otc_allocations (
   -- behaves and how the form behaves when the field is left empty.
   scheduled_start_time TIMESTAMPTZ
 );
+
+-- row_fingerprint is UNIQUE where present, so a re-uploaded import file is
+-- refused by the database itself rather than relying on the import code to
+-- spot it. Partial, because every allocation created through the single
+-- form has no fingerprint and they must not collide on NULL.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_otc_row_fingerprint
+  ON otc_allocations (row_fingerprint)
+  WHERE row_fingerprint IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_otc_import_batch ON otc_allocations (import_batch_id);
 CREATE INDEX IF NOT EXISTS idx_otc_payment_status ON otc_allocations(status);
 CREATE INDEX IF NOT EXISTS idx_otc_scheduled ON otc_allocations (scheduled_start_time) WHERE drip_status = 'scheduled';
 CREATE INDEX IF NOT EXISTS idx_otc_wallet ON otc_allocations(investor_wallet);
