@@ -32,7 +32,40 @@ router.get('/:wallet/purchases', validateWalletParam, walletRateLimit(30, 60000)
        FROM purchases WHERE buyer_wallet = $1 ORDER BY created_at DESC`,
       [req.params.wallet]
     );
-    res.json({ success: true, purchases: result.rows });
+
+    // Per-tier breakdown, attached to each purchase.
+    //
+    // A payment that filled its tier and continued into the next is one row
+    // above with two allocations here, at two prices. Without this the
+    // portfolio would show a single tier_price that does not multiply back
+    // to usd_value, and would disagree with the confirmation email the buyer
+    // already has. Single-tier purchases get a one-entry array, so the
+    // client has one shape to render rather than two.
+    const ids = result.rows.map((r) => r.id);
+    let byPurchase = {};
+    if (ids.length) {
+      const allocs = await pool.query(
+        `SELECT purchase_id, tier_id, tier_name, tier_price, usd_amount, tokens
+         FROM purchase_tier_allocations WHERE purchase_id = ANY($1) ORDER BY purchase_id, tier_id`,
+        [ids]
+      );
+      for (const a of allocs.rows) {
+        (byPurchase[a.purchase_id] ||= []).push({
+          tier_id: a.tier_id,
+          tier_name: a.tier_name,
+          tier_price: parseFloat(a.tier_price),
+          usd_amount: parseFloat(a.usd_amount),
+          tokens: parseFloat(a.tokens),
+        });
+      }
+    }
+
+    const purchases = result.rows.map((r) => ({
+      ...r,
+      tier_allocations: byPurchase[r.id] || [],
+    }));
+
+    res.json({ success: true, purchases });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 

@@ -187,6 +187,30 @@ async function sendPurchaseConfirmation(purchase, tier) {
       bonusTokens = parseFloat(bonusResult.rows[0]?.bonus_tokens || 0);
     }
 
+    // ── Per-tier breakdown ──
+    //
+    // A payment large enough to fill the tier it arrived in buys the
+    // remainder at the next tier's price, so one transaction can be two
+    // allocations at two prices. Showing only purchase.tier_name and
+    // purchase.tier_price would make the receipt fail to add up: the buyer
+    // would see a price and a token total that do not multiply back to what
+    // they paid. The breakdown is the receipt, for a split purchase.
+    const allocRes = await pool.query(
+      `SELECT tier_id, tier_name, tier_price, usd_amount, tokens
+       FROM purchase_tier_allocations WHERE purchase_id = $1 ORDER BY tier_id`,
+      [purchase.id]
+    );
+    const allocs = allocRes.rows;
+    const isSplit = allocs.length > 1;
+
+    const tierRows = isSplit
+      ? allocs.map((a) => statRow(
+          `${a.tier_name} &middot; ${fmtUsd(a.tier_price)} / FDP`,
+          `${fmtNum(a.tokens, 2)} FDP <span style="color:#8C9BB5;font-weight:400;">(${fmtUsd(a.usd_amount)})</span>`
+        )).join('')
+      : statRow('Tier', purchase.tier_name)
+        + statRow('Tier Price', fmtUsd(purchase.tier_price) + ' / FDP');
+
     const link = explorerLink(purchase.chain, purchase.tx_hash);
     const vestingLine = tier.cliff_months > 0
       ? `${tier.tge_percentage}% unlocks at TGE, remainder vests linearly over ${tier.vest_months} months following a ${tier.cliff_months}-month cliff.`
@@ -200,13 +224,16 @@ async function sendPurchaseConfirmation(purchase, tier) {
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
         ${statRow('Amount Paid', `${fmtNum(purchase.crypto_amount, 6)} ${purchase.crypto_currency}`)}
         ${statRow('USD Value', fmtUsd(purchase.usd_value))}
-        ${statRow('Tier', purchase.tier_name)}
-        ${statRow('Tier Price', fmtUsd(purchase.tier_price) + ' / FDP')}
-        ${statRow('Tokens Allocated', fmtNum(purchase.tokens_allocated, 2) + ' FDP')}
+        ${tierRows}
+        ${statRow(isSplit ? 'Total Tokens' : 'Tokens Allocated', fmtNum(purchase.tokens_allocated, 2) + ' FDP')}
         ${bonusTokens > 0 ? statRow('Referral Bonus Tokens', '+' + fmtNum(bonusTokens, 2) + ' FDP') : ''}
         ${statRow('Transaction Hash', purchase.tx_hash.slice(0, 10) + '...' + purchase.tx_hash.slice(-8))}
       </table>
       ${link ? `<p style="margin:16px 0 0 0;"><a href="${link}" style="color:#627EEA;text-decoration:none;">View transaction on block explorer &rarr;</a></p>` : ''}
+      ${isSplit ? `<div style="margin:24px 0;padding:16px;background-color:#0F1B30;border-radius:8px;border:1px solid #1B2B45;">
+        <p style="margin:0 0 4px 0;color:#8C9BB5;font-size:12px;text-transform:uppercase;letter-spacing:0.5px;">Why two prices</p>
+        <p style="margin:0;color:#ffffff;font-size:13px;">Your purchase completed the ${allocs[0].tier_name} tier and continued into the next one, so part of it was bought at each price. You were charged nothing extra: the lower price applied to as much of your purchase as that tier had left. Each tier unlocks on its own schedule, starting when that tier closes.</p>
+      </div>` : ''}
       <div style="margin:24px 0;padding:16px;background-color:#0F1B30;border-radius:8px;border:1px solid #1B2B45;">
         <p style="margin:0 0 4px 0;color:#8C9BB5;font-size:12px;text-transform:uppercase;letter-spacing:0.5px;">Vesting Schedule</p>
         <p style="margin:0;color:#ffffff;font-size:13px;">${vestingLine}</p>
