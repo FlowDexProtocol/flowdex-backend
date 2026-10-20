@@ -39,6 +39,14 @@ const MAX_SCHEDULE_DAYS = 90;
 // something new and refusing the whole batch over it is worse.
 const KNOWN_CURRENCIES = ['ETH', 'USDT', 'USDC', 'BNB', 'SOL', 'BTC', 'TRX', 'POL', 'MATIC', 'DAI', 'BUSD'];
 
+// Dollar-pegged, so the crypto amount equals the USD amount exactly and can
+// be filled in rather than typed. Only these two: they are what the buy page
+// accepts, and their peg is the reason this is arithmetic rather than a
+// guess. No volatile coin is ever filled in this way — the investor paid at
+// the rate on their day, and a figure derived from any other rate is one
+// they did not send.
+const DOLLAR_PEGGED = ['USDT', 'USDC'];
+
 // A payment older than this is probably a mistyped year. Flagged, not blocked.
 const STALE_DAYS = 60;
 
@@ -137,6 +145,14 @@ function validateRow(raw, index) {
 
   if (row.crypto_amount !== null && (!Number.isFinite(row.crypto_amount) || row.crypto_amount <= 0)) {
     errors.push('crypto_amount must be a number above 0 when present');
+  }
+
+  // A stablecoin row left blank gets its amount filled from the USD figure.
+  // Anything typed in the file wins: the admin read it off the wallet.
+  if (row.crypto_amount === null
+      && DOLLAR_PEGGED.includes(row.payment_currency)
+      && Number.isFinite(row.usd_amount) && row.usd_amount > 0) {
+    row.crypto_amount = row.usd_amount;
   }
 
   // release_at is the whole point of the file: when this allocation happens

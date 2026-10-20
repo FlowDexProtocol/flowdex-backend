@@ -14,6 +14,7 @@
 // ══════════════════════════════════════════════════
 
 const axios = require('axios');
+const pool = require('../db/pool');
 
 // Reuses the existing alert bot. That bot must be added to the channel as
 // an administrator with "Post Messages" permission, otherwise Telegram
@@ -174,6 +175,41 @@ function post(text) {
 }
 
 // ───────────────────────────────────────────────
+// Next tier price.
+//
+// Found by price rather than by id: tier prices only ascend, so the tier
+// after this one is simply the cheapest tier priced above it. That means no
+// caller has to pass a tier id, and it stays correct in the case where a
+// purchase fills its tier and advances the presale — the message still names
+// the tier after the one the buyer actually got, not the one after that.
+//
+// Tier prices are fixed once seeded, so the cache never needs invalidating.
+// A null result is cached too: at the final tier there is no next price, and
+// that should not re-query on every announcement.
+// ───────────────────────────────────────────────
+const nextPriceCache = new Map();
+
+async function nextTierPrice(tierPrice) {
+  const price = Number(tierPrice);
+  if (!Number.isFinite(price) || price <= 0) return null;
+  if (nextPriceCache.has(price)) return nextPriceCache.get(price);
+
+  try {
+    const r = await pool.query(
+      'SELECT price FROM tiers WHERE price > $1 ORDER BY price ASC LIMIT 1', [price]
+    );
+    const next = r.rows[0] ? Number(r.rows[0].price) : null;
+    nextPriceCache.set(price, next);
+    return next;
+  } catch (err) {
+    // The announcement is worth more than the extra line. Never let a
+    // failed lookup stop a purchase being posted.
+    console.error('[ANNOUNCE] Next-tier lookup failed:', err.message);
+    return null;
+  }
+}
+
+// ───────────────────────────────────────────────
 // Purchase announcement.
 //
 // One format for every purchase, whatever route it arrived by. An OTC deal
@@ -181,17 +217,31 @@ function post(text) {
 // buying FDP, and the channel says so identically. Nothing marks a purchase
 // as OTC, by design.
 //
-// Omit cryptoAmount/currency for a purchase settled in fiat; the line then
-// reads in dollars rather than naming a coin that was never sent.
+// The paid-in line has three shapes, in descending order of what is known:
+//
+//   both amount and currency  ->  0.52 ETH ($5,000)
+//   currency only             ->  $5,000 in ETH
+//   neither                   ->  $5,000
+//
+// The middle case exists because the crypto amount is optional on an
+// imported allocation. It is deliberately NOT computed from the live price:
+// the investor paid at the rate on their day, and publishing a figure they
+// never sent, attached to their purchase, is worse than naming no figure at
+// all. Omit both for a purchase settled in fiat.
 // ───────────────────────────────────────────────
 async function announcePurchase({ wallet, cryptoAmount, currency, usdValue, tokens, tierName, tierPrice, receivedAt }) {
   if (!configured()) return;
   if ((Number(usdValue) || 0) < MIN_USD) return;
 
-  const paidIn = cryptoAmount && currency
-    ? '<b>' + formatCrypto(cryptoAmount, currency) + ' ' + currency + '</b>' +
-      (usdValue ? ' (' + formatUsd(usdValue) + ')' : '')
-    : '<b>' + formatUsd(usdValue) + '</b>';
+  let paidIn;
+  if (cryptoAmount && currency) {
+    paidIn = '<b>' + formatCrypto(cryptoAmount, currency) + ' ' + currency + '</b>' +
+      (usdValue ? ' (' + formatUsd(usdValue) + ')' : '');
+  } else if (currency) {
+    paidIn = '<b>' + formatUsd(usdValue) + '</b> in ' + currency;
+  } else {
+    paidIn = '<b>' + formatUsd(usdValue) + '</b>';
+  }
 
   // A payment entered hours or days after it arrived should not read as
   // having just happened. When the receipt date is not today, the message
@@ -215,9 +265,18 @@ async function announcePurchase({ wallet, cryptoAmount, currency, usdValue, toke
     }));
   }
 
+  // The tier line carries the only urgency the message needs: what the next
+  // tier costs. It is a fact about the price ladder, not a claim about what
+  // the token will do, and it says plainly what waiting costs. Nothing about
+  // how much has been raised appears here, by design.
   if (tierName) {
+    const next = tierPrice ? await nextTierPrice(tierPrice) : null;
     lines.push('');
-    lines.push(tierName + (tierPrice ? ' · $' + Number(tierPrice) : ''));
+    lines.push(
+      tierName +
+      (tierPrice ? ' · $' + Number(tierPrice) : '') +
+      (next ? ' · next tier $' + next : '')
+    );
   }
 
   post(lines.join('\n'));
