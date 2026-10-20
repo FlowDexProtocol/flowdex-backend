@@ -139,7 +139,16 @@ router.get('/stats', async (req, res) => {
       total_raised_usd: parseFloat(raised.rows[0].t),
       total_buyers: await countBuyers(),
       total_wallets_connected: await countWalletsConnected(),
-      current_tier: activeTier.rows[0] || null,
+      current_tier: activeTier.rows[0]
+        ? {
+            ...activeTier.rows[0],
+            tokens_remaining: Math.max(
+              (parseFloat(activeTier.rows[0].hard_cap_usd) - parseFloat(activeTier.rows[0].total_raised_usd))
+                / parseFloat(activeTier.rows[0].price),
+              0
+            ),
+          }
+        : null,
     });
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });

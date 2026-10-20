@@ -33,12 +33,26 @@ router.get('/current', async (req, res) => {
       ? parseFloat(overrides.progress_bar_override)
       : (realRaised / parseFloat(tier.hard_cap_usd)) * 100;
 
+    // FDP still available at this tier's price. Computed from the display
+    // figures rather than the real ones, so an admin raised-override moves
+    // this number with it instead of contradicting it.
+    //
+    // Note for whoever hides the cap next: this does not conceal it on its
+    // own. tokens_remaining * price + total_raised_usd is the hard cap, and
+    // both of the other two are public. Concealing it means dropping
+    // hard_cap_usd and progress_pct from this response and the /api/tiers
+    // list, which can happen once no front end reads them.
+    const tokensRemaining = Math.max(
+      (parseFloat(tier.hard_cap_usd) - displayRaised) / displayPrice, 0
+    );
+
     res.json({
       id: displayTierId,
       name: tier.name,
       price: displayPrice,
       total_raised_usd: displayRaised,
       hard_cap_usd: parseFloat(tier.hard_cap_usd),
+      tokens_remaining: tokensRemaining,
       progress_pct: Math.min(progressPct, 100).toFixed(2),
       tge_percentage: parseFloat(tier.tge_percentage),
       cliff_months: tier.cliff_months,
@@ -55,7 +69,15 @@ router.get('/current', async (req, res) => {
 router.get('/', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM tiers ORDER BY id');
-    res.json(result.rows);
+    // tokens_remaining alongside each tier, so a list can show what is left
+    // without each caller repeating the arithmetic differently.
+    const rows = result.rows.map((t) => ({
+      ...t,
+      tokens_remaining: Math.max(
+        (parseFloat(t.hard_cap_usd) - parseFloat(t.total_raised_usd)) / parseFloat(t.price), 0
+      ),
+    }));
+    res.json(rows);
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
