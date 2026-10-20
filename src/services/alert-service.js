@@ -68,6 +68,24 @@ async function alertLargePurchase(wallet, amount, tokens) {
     'Tokens: ' + tokens.toLocaleString() + ' FDP', 'info');
 }
 
+// Raised whenever a payment is recorded but NOT allocated. The money is in
+// the wallet and the buyer has no tokens, so this is the most urgent thing
+// the system can tell an admin: it needs a person, and the buyer is waiting.
+async function alertPurchaseFlagged(purchaseId, wallet, usdValue, reason, txHash) {
+  const why = reason === 'supply_exhausted'
+    ? 'There are not enough tokens left to allocate it.'
+    : 'It could not be allocated against any remaining tier.';
+
+  await sendAlert('Payment Held — Needs Review',
+    'Purchase #' + purchaseId + ' was received but NOT allocated.\n' +
+    'Wallet: ' + String(wallet).substring(0, 8) + '...' + String(wallet).slice(-4) + '\n' +
+    'Amount: $' + Number(usdValue).toLocaleString() + '\n' +
+    (txHash ? 'Tx: ' + txHash + '\n' : '') +
+    why + '\n\n' +
+    'The buyer has paid and holds no tokens. They have been told it is under review.',
+    'critical');
+}
+
 async function alertTierAdvanced(fromTier, toTier) {
   await sendAlert('Tier Advanced',
     'Tier ' + fromTier + ' has closed. ' + (toTier ? ('Tier ' + toTier + ' is now active.') : 'Presale is complete — all tiers closed.') + '\n' +
@@ -100,5 +118,5 @@ async function alertUnknownToken(currency, tokenName, amount, contractAddress, c
 module.exports = {
   sendAlert, alertReconciliationMismatch, alertTierNearlyFull,
   alertWebhookDown, alertSupplyLow, alertLargePurchase, alertTierAdvanced, alertUnknownToken,
-  alertLatePayment, alertOtcCancelled,
+  alertLatePayment, alertOtcCancelled, alertPurchaseFlagged,
 };

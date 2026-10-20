@@ -29,7 +29,7 @@ async function reconcileEthereum() {
     // purchases count as "records to match" — a pending/expired/needs_pricing
     // intent that never got a payment (or hasn't been matched yet) is not a
     // reconciliation discrepancy, it's normal presale funnel drop-off.
-    "SELECT tx_hash FROM purchases WHERE chain = 'ethereum' AND status = 'confirmed' AND created_at > NOW() - ($1 || ' hours')::interval",
+    "SELECT DISTINCT tx_hash FROM purchases WHERE chain = 'ethereum' AND status = 'confirmed' AND created_at > NOW() - ($1 || ' hours')::interval",
     [PERIOD_HOURS]
   );
 

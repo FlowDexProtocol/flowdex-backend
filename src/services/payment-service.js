@@ -26,7 +26,7 @@ const { canAllocate } = require('./supply-service');
 const { processReferralBonus } = require('./referral-service');
 const { generateClaimsForTier } = require('./claims-service');
 const { logAudit } = require('./audit-service');
-const { alertLargePurchase, alertTierNearlyFull, alertTierAdvanced, alertUnknownToken, alertSupplyLow, alertLatePayment } = require('./alert-service');
+const { alertLargePurchase, alertTierNearlyFull, alertTierAdvanced, alertUnknownToken, alertSupplyLow, alertLatePayment, alertPurchaseFlagged } = require('./alert-service');
 const { announcePurchase } = require('./announce-service');
 const { sendPurchaseConfirmation, sendReferralNotification, sendLargePurchaseAlert } = require('./email-service');
 
@@ -208,13 +208,58 @@ async function processPayment({ senderWallet, amount, currency, chain, txHash, t
       if (isLatePayment) matchStatus = 'late_payment';
     }
 
-    const tokensAllocated = finalUsdValue / parseFloat(tier.price);
+    // ── STEP 5: SPLIT ACROSS TIER BOUNDARIES ──
+    //
+    // A payment larger than the room left in the active tier fills that tier
+    // to its cap and buys the remainder at the next tier's price, cascading
+    // as far as it needs to. Every tier it touches is locked FOR UPDATE in
+    // ascending id order, which is also the order the active-tier lock above
+    // took, so two concurrent payments can never deadlock against each other.
+    //
+    // The buyer is never repriced downward for the part that fit: the first
+    // segment keeps the tier that was live when they paid.
+    const segments = [];
+    let remainingUsd = finalUsdValue;
+    let cursor = tier;
 
-    // ── STEP 5: SUPPLY + TIER CAP GUARD ──
+    while (remainingUsd > 0.01 && cursor) {
+      const room = parseFloat(cursor.hard_cap_usd) - parseFloat(cursor.total_raised_usd);
+      const take = Math.min(remainingUsd, Math.max(room, 0));
+
+      if (take > 0.0001) {
+        segments.push({
+          tier: cursor,
+          usd: take,
+          tokens: take / parseFloat(cursor.price),
+        });
+        remainingUsd -= take;
+      }
+
+      if (remainingUsd > 0.01) {
+        const nextId = cursor.id + 1;
+        // 20 seeded tiers (src/db/seed-tiers.js). Past the last one there is
+        // nothing left to sell, and the leftover is handled below.
+        if (nextId > 20) { cursor = null; break; }
+        const nextRow = await client.query('SELECT * FROM tiers WHERE id = $1 FOR UPDATE', [nextId]);
+        cursor = nextRow.rows[0] || null;
+      } else {
+        cursor = null;
+      }
+    }
+
+    const tokensAllocated = segments.reduce((sum, seg) => sum + seg.tokens, 0);
+
+    // ── SUPPLY GUARD ──
+    //
+    // Still a hard stop. Unallocatable money is flagged whole rather than
+    // part-credited: a purchase that is half allocated and half not is far
+    // harder to reason about afterwards than one that is cleanly held for
+    // review. remainingUsd above zero means the presale ran out of tiers
+    // mid-payment, which is the same situation.
     const supplyCheck = await canAllocate(tokensAllocated);
-    const wouldExceedTierCap = (parseFloat(tier.total_raised_usd) + finalUsdValue) > parseFloat(tier.hard_cap_usd);
+    const ranOutOfTiers = remainingUsd > 0.01;
 
-    if (!supplyCheck.allowed || wouldExceedTierCap) {
+    if (!supplyCheck.allowed || ranOutOfTiers || segments.length === 0) {
       const reason = !supplyCheck.allowed ? 'supply_exhausted' : 'tier_cap_exceeded';
       const purchaseInsert = await client.query(`
         INSERT INTO purchases (buyer_wallet, tx_hash, chain, network_name, crypto_currency, crypto_amount,
@@ -231,15 +276,38 @@ async function processPayment({ senderWallet, amount, currency, chain, txHash, t
         null, { reason, requested_tokens: tokensAllocated, remaining_supply: supplyCheck.remaining },
         'Payment received but ' + reason + ' — admin review required', 'system');
 
+      // The buyer's money is in the wallet and their tokens are not. They
+      // find out here rather than by noticing nothing happened.
+      await client.query(
+        `INSERT INTO notifications (wallet, type, title, message) VALUES ($1, 'purchase_flagged', 'Purchase Under Review', $2)`,
+        [buyerWallet, 'Your payment was received and is being reviewed before tokens are allocated. '
+          + 'This is normally resolved within a few hours and no action is needed from you.']
+      );
+
+      await client.query('COMMIT');
+
+      // Alerts after COMMIT: the purchase is already durable, so a failing
+      // alert can never roll one back.
+      //
+      // This used to fire only for exhausted supply, which meant a payment
+      // held for any other reason was recorded and never mentioned to
+      // anyone. Every held payment now raises one.
       if (!supplyCheck.allowed) {
         await alertSupplyLow(supplyCheck.remaining, '100+');
       }
+      await alertPurchaseFlagged(purchaseInsert.rows[0].id, buyerWallet, finalUsdValue, reason, txHash);
 
-      await client.query('COMMIT');
       return { success: true, purchaseId: purchaseInsert.rows[0].id, flagged: reason };
     }
 
     // ── STEP 6: RECORD + ALLOCATE ──
+    //
+    // entryTier is the tier the buyer actually entered at. Normally that is
+    // the tier that was active, but a tier sitting exactly at its cap while
+    // still flagged active contributes no segment, and the entry is then the
+    // tier after it.
+    const entryTier = segments[0].tier;
+
     let purchaseId;
     if (intent) {
       await client.query(`
@@ -247,10 +315,12 @@ async function processPayment({ senderWallet, amount, currency, chain, txHash, t
           crypto_amount = $1, usd_value = $2, price_at_purchase = $3, price_source = $4,
           tokens_allocated = $5, status = 'confirmed', payment_match_status = $6,
           token_name = $7, contract_address = $8, is_known_token = $9,
+          tier_at_purchase = $12, tier_name = $13, tier_price = $14,
           webhook_received_at = NOW(), confirmed_at = NOW(), tx_hash = $10
         WHERE id = $11
       `, [amount, finalUsdValue, finalPrice, finalPriceSource, tokensAllocated, matchStatus,
-          tokenName || currency, contractAddress || null, isKnownToken !== false, txHash, intent.id]);
+          tokenName || currency, contractAddress || null, isKnownToken !== false, txHash, intent.id,
+          entryTier.id, entryTier.name, entryTier.price]);
       purchaseId = intent.id;
     } else {
       const insertResult = await client.query(`
@@ -261,7 +331,7 @@ async function processPayment({ senderWallet, amount, currency, chain, txHash, t
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'confirmed',$14,$15,$16,$17,NOW(),NOW(),NOW(),$18,$19,$20)
         RETURNING id
       `, [buyerWallet, txHash, chain, networkName, currency, amount, finalUsdValue, finalPrice, finalPriceSource,
-          tier.id, tier.name, tier.price, tokensAllocated, matchStatus, tokenName || currency, contractAddress || null,
+          entryTier.id, entryTier.name, entryTier.price, tokensAllocated, matchStatus, tokenName || currency, contractAddress || null,
           isKnownToken !== false, dayGmt4, weekGmt4, monthGmt4]);
       purchaseId = insertResult.rows[0].id;
     }
@@ -279,10 +349,22 @@ async function processPayment({ senderWallet, amount, currency, chain, txHash, t
       [finalUsdValue, tokensAllocated, buyerWallet]
     );
 
-    await client.query(
-      'UPDATE tiers SET total_raised_usd = total_raised_usd + $1 WHERE id = $2',
-      [finalUsdValue, tier.id]
-    );
+    // Each tier is credited only its own segment, and the breakdown is
+    // written alongside. Claim generation reads that breakdown rather than
+    // purchases.tier_at_purchase, so a buyer who crossed a boundary gets a
+    // claim in each tier they bought into, on that tier's vesting clock.
+    for (const seg of segments) {
+      await client.query(
+        'UPDATE tiers SET total_raised_usd = total_raised_usd + $1 WHERE id = $2',
+        [seg.usd, seg.tier.id]
+      );
+      await client.query(
+        `INSERT INTO purchase_tier_allocations (purchase_id, tier_id, tier_name, tier_price, usd_amount, tokens)
+         VALUES ($1,$2,$3,$4,$5,$6)
+         ON CONFLICT (purchase_id, tier_id) DO NOTHING`,
+        [purchaseId, seg.tier.id, seg.tier.name, seg.tier.price, seg.usd, seg.tokens]
+      );
+    }
 
     await client.query(
       `INSERT INTO notifications (wallet, type, title, message) VALUES ($1, 'purchase_confirmed', 'Purchase Confirmed', $2)`,
@@ -338,8 +420,15 @@ async function processPayment({ senderWallet, amount, currency, chain, txHash, t
         currency,
         usdValue: finalUsdValue,
         tokens: tokensAllocated,
-        tierName: tier.name,
-        tierPrice: finalPrice,
+        // entryTier.price is the FDP price of the tier, e.g. 0.0005. Not
+        // finalPrice, which is the locked USD price of the coin they sent,
+        // e.g. 2415.33 for ETH. Passing that printed the coin price as the
+        // tier price in the channel.
+        //
+        // A purchase that crossed a boundary is announced at the tier it
+        // entered: that is the price the buyer saw when they clicked buy.
+        tierName: entryTier.name,
+        tierPrice: entryTier.price,
       });
     } catch (err) {
       console.error('[ANNOUNCE] Purchase announcement failed:', err.message);
@@ -362,29 +451,41 @@ async function processPayment({ senderWallet, amount, currency, chain, txHash, t
       console.error('[EMAIL] Post-purchase email dispatch failed:', emailErr.message);
     }
 
-    const updatedTier = await pool.query('SELECT * FROM tiers WHERE id = $1', [tier.id]);
-    const t = updatedTier.rows[0];
-    const pctFull = (parseFloat(t.total_raised_usd) / parseFloat(t.hard_cap_usd)) * 100;
+    // A split purchase can fill more than one tier at once, so every tier it
+    // touched is checked, in ascending order. Only the last segment's tier can
+    // be left partly full, which is why the nearly-full alert can only ever
+    // apply to that one.
+    //
+    // generateClaimsForTier opens its own transaction, so this runs after the
+    // COMMIT above — calling it while still holding the tier rows FOR UPDATE
+    // would deadlock against itself.
+    for (const seg of segments) {
+      const updatedTier = await pool.query('SELECT * FROM tiers WHERE id = $1', [seg.tier.id]);
+      const t = updatedTier.rows[0];
+      if (!t) continue;
+      const pctFull = (parseFloat(t.total_raised_usd) / parseFloat(t.hard_cap_usd)) * 100;
 
-    if (pctFull >= 90 && pctFull < 100) {
-      await alertTierNearlyFull(tier.id, pctFull.toFixed(1));
-    }
-
-    if (parseFloat(t.total_raised_usd) >= parseFloat(t.hard_cap_usd)) {
-      await pool.query('UPDATE tiers SET is_active = false, closed_at = NOW() WHERE id = $1', [tier.id]);
-      const nextId = tier.id + 1;
-      let advancedTo = null;
-      // 20 seeded tiers (src/db/seed-tiers.js) — keep this in sync with the
-      // highest tier id there, or the presale silently stops advancing once
-      // the last tier fills and no tier is ever left active.
-      if (nextId <= 20) {
-        await pool.query('UPDATE tiers SET is_active = true, opened_at = NOW() WHERE id = $1', [nextId]);
-        advancedTo = nextId;
+      if (pctFull >= 90 && pctFull < 100) {
+        await alertTierNearlyFull(seg.tier.id, pctFull.toFixed(1));
+        continue;
       }
-      await generateClaimsForTier(tier.id);
-      await logAudit('tier_advanced', null, null, null, { tier: tier.id }, { tier: advancedTo },
-        'Tier filled — advanced to next tier', 'system');
-      await alertTierAdvanced(tier.id, advancedTo);
+
+      if (parseFloat(t.total_raised_usd) >= parseFloat(t.hard_cap_usd)) {
+        await pool.query('UPDATE tiers SET is_active = false, closed_at = NOW() WHERE id = $1', [seg.tier.id]);
+        const nextId = seg.tier.id + 1;
+        let advancedTo = null;
+        // 20 seeded tiers (src/db/seed-tiers.js) — keep this in sync with the
+        // highest tier id there, or the presale silently stops advancing once
+        // the last tier fills and no tier is ever left active.
+        if (nextId <= 20) {
+          await pool.query('UPDATE tiers SET is_active = true, opened_at = NOW() WHERE id = $1', [nextId]);
+          advancedTo = nextId;
+        }
+        await generateClaimsForTier(seg.tier.id);
+        await logAudit('tier_advanced', null, null, null, { tier: seg.tier.id }, { tier: advancedTo },
+          'Tier filled — advanced to next tier', 'system');
+        await alertTierAdvanced(seg.tier.id, advancedTo);
+      }
     }
 
     return { success: true, purchaseId, tokensAllocated, usdValue: finalUsdValue, matchStatus };
@@ -473,7 +574,9 @@ async function confirmPayment(purchaseId, actualCryptoAmount) {
         usdValue: purchase.usd_value,
         tokens: purchase.tokens_allocated,
         tierName: tierRow.rows[0]?.name,
-        tierPrice: purchase.price_at_purchase,
+        // The tier's own price, for the same reason as above —
+        // purchase.price_at_purchase is the coin price, not the FDP price.
+        tierPrice: tierRow.rows[0]?.price,
       });
     } catch (err) {
       console.error('[ANNOUNCE] Purchase announcement failed:', err.message);

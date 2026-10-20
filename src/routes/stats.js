@@ -6,6 +6,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db/pool');
+const { countBuyers, countWalletsConnected } = require('../services/buyer-count');
 const dayjs = require('dayjs');
 const utc = require('dayjs/plugin/utc');
 const tz = require('dayjs/plugin/timezone');
@@ -20,7 +21,6 @@ const TZ = process.env.TIMEZONE || 'Asia/Dubai';
 router.get('/', async (req, res) => {
   try {
     const raised = await pool.query('SELECT COALESCE(SUM(total_raised_usd),0) as t FROM tiers');
-    const buyers = await pool.query('SELECT COUNT(*) as t FROM buyers');
     const purchases = await pool.query("SELECT COUNT(*) as t FROM purchases WHERE status = 'confirmed'");
     const burned = await pool.query('SELECT COALESCE(SUM(tokens_burned),0) as t FROM burn_log');
     const credits = await pool.query('SELECT COALESCE(SUM(amount_usd),0) as t FROM terminal_credits');
@@ -28,7 +28,13 @@ router.get('/', async (req, res) => {
 
     res.json({
       total_raised_usd: parseFloat(raised.rows[0].t),
-      total_buyers: parseInt(buyers.rows[0].t),
+      // total_buyers used to be COUNT(*) FROM buyers — every wallet that had
+      // ever connected, paid or not. It now means what its name says, and
+      // the old figure is still available under its own name below.
+      total_buyers: await countBuyers(),
+      total_wallets_connected: await countWalletsConnected(),
+      // Confirmed on-chain purchases only. An OTC allocation is not a
+      // purchases row, so this is a count of transactions, not of buyers.
       total_purchases: parseInt(purchases.rows[0].t),
       total_tokens_burned: parseFloat(burned.rows[0].t),
       total_terminal_credits_issued: parseFloat(credits.rows[0].t),

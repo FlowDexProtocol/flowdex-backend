@@ -19,6 +19,27 @@ CREATE TABLE IF NOT EXISTS tiers (
   closed_at TIMESTAMPTZ
 );
 
+-- ── purchase_tier_allocations ──
+-- The per-tier breakdown of a purchase. A payment that crosses a tier
+-- boundary is ONE purchases row (tx_hash stays unique, so a replayed
+-- webhook still cannot double-credit) and one row here per tier it bought
+-- into. Vesting is per tier, so claim generation reads this, not
+-- purchases.tier_at_purchase — which on a split purchase records only the
+-- tier the buyer entered at.
+CREATE TABLE IF NOT EXISTS purchase_tier_allocations (
+  id SERIAL PRIMARY KEY,
+  purchase_id INTEGER NOT NULL REFERENCES purchases(id) ON DELETE CASCADE,
+  tier_id INTEGER NOT NULL REFERENCES tiers(id),
+  tier_name VARCHAR(50) NOT NULL,
+  tier_price DECIMAL(18,8) NOT NULL,
+  usd_amount DECIMAL(18,2) NOT NULL,
+  tokens DECIMAL(36,18) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (purchase_id, tier_id)
+);
+CREATE INDEX IF NOT EXISTS idx_pta_tier ON purchase_tier_allocations (tier_id);
+CREATE INDEX IF NOT EXISTS idx_pta_purchase ON purchase_tier_allocations (purchase_id);
+
 -- ── Table 2: purchases ──
 -- NEVER delete a row here. Mark as failed/refunded/cancelled instead.
 CREATE TABLE IF NOT EXISTS purchases (
