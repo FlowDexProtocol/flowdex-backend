@@ -45,6 +45,14 @@ function destinations() {
 // of them reads worse than an empty one.
 const MIN_USD = parseFloat(process.env.PUBLIC_ANNOUNCE_MIN_USD || '25');
 
+// Every purchase post reaches someone already thinking about buying, so the
+// message ends with somewhere to go. Set PUBLIC_BUY_URL if the buy page ever
+// moves; the default is where it lives today. Shown as the bare domain
+// rather than a button: a link reads as information, a button as an advert.
+const BUY_URL = (process.env.PUBLIC_BUY_URL || 'https://buy.flowdexprotocol.com')
+  .trim().replace(/\/$/, '');
+const BUY_LABEL = BUY_URL.replace(/^https?:\/\//, '');
+
 function configured() {
   return !!BOT_TOKEN && destinations().length > 0;
 }
@@ -229,6 +237,17 @@ async function nextTierPrice(tierPrice) {
 // never sent, attached to their purchase, is worse than naming no figure at
 // all. Omit both for a purchase settled in fiat.
 // ───────────────────────────────────────────────
+// The header scales with the purchase, so a large buy stands out in a feed
+// of small ones without the message having to shout. The wording stays plain
+// at every size: the icon carries the emphasis, and nothing here claims
+// anything about what the token will be worth later.
+function headerFor(usdValue) {
+  const usd = Number(usdValue) || 0;
+  if (usd >= 10000) return '\uD83D\uDC8E <b>Large purchase</b>';
+  if (usd >= 1000) return '\uD83D\uDD25 <b>New purchase</b>';
+  return '\u26A1 <b>New purchase</b>';
+}
+
 async function announcePurchase({ wallet, cryptoAmount, currency, usdValue, tokens, tierName, tierPrice, receivedAt }) {
   if (!configured()) return;
   if ((Number(usdValue) || 0) < MIN_USD) return;
@@ -252,7 +271,7 @@ async function announcePurchase({ wallet, cryptoAmount, currency, usdValue, toke
     && when.toDateString() === new Date().toDateString();
 
   const lines = [
-    '🟢 <b>New purchase</b>',
+    headerFor(usdValue),
     '',
     '<code>' + shortWallet(wallet) + '</code> bought ' + paidIn,
     formatTokens(tokens) + ' FDP',
@@ -278,6 +297,9 @@ async function announcePurchase({ wallet, cryptoAmount, currency, usdValue, toke
       (next ? ' · next tier $' + next : '')
     );
   }
+
+  lines.push('');
+  lines.push('Buy FDP: <a href="' + BUY_URL + '">' + BUY_LABEL + '</a>');
 
   post(lines.join('\n'));
 }
